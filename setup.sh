@@ -98,10 +98,120 @@ print_summary() {
   echo -e "${CYAN}======================================================${NC}\n"
 }
 
-# Source guard — prevents main() running when sourced by tests.
-# main() is added in Task 2; this guard is a no-op until then.
+run_update() {
+  log_info "Updating AI Sherpa skills..."
+  npx skillsadd obra/superpowers
+  npx skillsadd safishamsi/graphify
+  npx skillsadd mattpocock/skills
+  npx skillsadd pbakaus/impeccable
+  npx skillsadd sentry/dev
+  write_settings
+  log_info "Update complete. Your project CLAUDE.md was NOT modified."
+}
+
+main() {
+  local UPDATE_MODE=false
+
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --update) UPDATE_MODE=true; shift ;;
+      *) log_error "Unknown argument: $1  (valid: --update)"; exit 1 ;;
+    esac
+  done
+
+  echo -e "${CYAN}"
+  echo "  AI Sherpa — Company-wide Claude Code Setup"
+  echo -e "${NC}"
+
+  if [[ "$UPDATE_MODE" == true ]]; then
+    run_update
+    exit 0
+  fi
+
+  # Guard: warn if run from inside the ai-sherpa repo itself
+  if [[ -f "$PWD/core/CLAUDE.md" && "$PWD" == "$SCRIPT_DIR" ]]; then
+    log_warn "You are running setup from inside the AI Sherpa repo."
+    log_warn "Please cd to your project directory first, then run:"
+    log_warn "  bash $SCRIPT_DIR/setup.sh"
+    exit 1
+  fi
+
+  # --- Prerequisites ---
+  log_info "Checking prerequisites..."
+
+  if ! check_command node; then
+    log_info "Node.js not found. Installing via nvm..."
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+    export NVM_DIR="$HOME/.nvm"
+    # shellcheck source=/dev/null
+    [[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh"
+    nvm install 20
+    nvm use 20
+    log_info "Node.js $(node --version) installed via nvm."
+  else
+    log_info "Node.js $(node --version) found."
+  fi
+
+  if ! check_command git; then
+    log_error "Git not found. Install from https://git-scm.com/ then re-run this script."
+    exit 1
+  fi
+  log_info "Git found."
+
+  if ! check_command claude; then
+    log_info "Claude Code not found. Installing..."
+    npm install -g @anthropic-ai/claude-code
+    log_info "Claude Code installed."
+  else
+    log_info "Claude Code found."
+  fi
+
+  # --- Domain selection ---
+  echo ""
+  echo "Which domain are you working in?"
+  echo "  [1] Embedded Software (C/C++, firmware, RTOS)"
+  echo "  [2] Web / Frontend (React, Vue, Angular, HTML/CSS)"
+  echo "  [3] Backend (Node.js, Python)"
+  echo "  [4] Data Science / ML"
+  echo "  [5] DevOps / Platform"
+  echo ""
+  read -rp "Enter number [1-5]: " domain_choice
+
+  local domain
+  case "$domain_choice" in
+    1) domain="embedded" ;;
+    2) domain="web" ;;
+    3) domain="backend" ;;
+    4) domain="data" ;;
+    5) domain="devops" ;;
+    *) log_error "Invalid choice: $domain_choice. Run the script again."; exit 1 ;;
+  esac
+
+  # --- New or existing project ---
+  echo ""
+  echo "New project or existing project?"
+  echo "  [1] New project"
+  echo "  [2] Existing project (CLAUDE.md will be appended, not replaced)"
+  echo ""
+  read -rp "Enter number [1-2]: " project_choice
+
+  local project_type
+  case "$project_choice" in
+    1) project_type="new" ;;
+    2) project_type="existing" ;;
+    *) log_error "Invalid choice: $project_choice. Run the script again."; exit 1 ;;
+  esac
+
+  # --- Install ---
+  install_core_skills
+  install_domain_skills "$domain"
+  write_settings
+  write_project_settings
+  copy_claude_md "$domain" "$project_type"
+  print_summary "$domain"
+}
+
+# Source guard — prevents main() running when sourced by tests
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  declare -f main &>/dev/null && main "$@" || {
-    echo "[AI Sherpa] setup.sh loaded successfully. Run after Task 2 adds main()."
-  }
+  main "$@"
 fi
