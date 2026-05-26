@@ -1,0 +1,31 @@
+# AI Sherpa — DevOps / Platform Rules
+
+These rules apply to all DevOps and platform engineering projects. They extend core/CLAUDE.md.
+
+---
+
+## Always Do (DevOps)
+
+1. Use Infrastructure-as-Code (Terraform, Ansible, Pulumi) — never make manual cloud console changes
+2. Estimate blast radius before applying any infrastructure change — state it explicitly
+3. Document a rollback plan before deleting or modifying existing infrastructure
+4. Store all secrets in a secrets manager (Vault, AWS Secrets Manager, GitHub Secrets) — never in code or config files
+5. Tag all cloud resources with environment, owner, and cost-centre
+
+---
+
+## Never Do (DevOps)
+
+1. Hardcode environment-specific values (IP addresses, region names, account IDs, credentials) in IaC files
+2. Apply `terraform apply` or equivalent without first running and reviewing `terraform plan`
+3. Delete infrastructure (databases, queues, storage buckets) without an explicit rollback plan approved by a human
+4. Store secrets in environment variables in CI/CD pipeline YAML files — use the platform's secret store
+5. Give IAM roles or service accounts more permissions than they need (principle of least privilege)
+
+---
+
+## GitHub Actions Specific
+
+- Always pin GitHub Actions to a specific SHA, not a mutable tag (`uses: actions/checkout@abc1234` not `@v3`)
+- Never print secrets to workflow logs — use `::add-mask::` for sensitive values
+- Store all API keys and tokens as GitHub Secrets — never in workflow YAML
