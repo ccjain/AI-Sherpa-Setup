@@ -40,6 +40,7 @@ write_settings
 assert_file_exists "global settings.json created" "$TMP/.claude/settings.json"
 assert_file_contains "global settings has Read .env rule" "$TMP/.claude/settings.json" '"Read'
 assert_file_contains "global settings has Write .env rule" "$TMP/.claude/settings.json" '"Write'
+assert_no_file "no .bak on first run" "$TMP/.claude/settings.json.bak"
 
 # Second call creates backup
 write_settings
@@ -78,6 +79,17 @@ echo "# My existing project rules" > CLAUDE.md
 copy_claude_md "web" "existing"
 assert_file_contains "original content preserved" "$TMP/CLAUDE.md" "My existing project rules"
 assert_file_contains "domain rules appended" "$TMP/CLAUDE.md" "Web / Frontend"
+
+popd > /dev/null; rm -rf "$TMP"
+
+# --- Test copy_claude_md — existing project type but no pre-existing CLAUDE.md ---
+echo "=== Test: copy_claude_md (existing project type, no prior CLAUDE.md) ==="
+TMP=$(mktemp -d)
+pushd "$TMP" > /dev/null
+
+copy_claude_md "web" "existing"
+assert_file_exists "CLAUDE.md created even with existing type" "$TMP/CLAUDE.md"
+assert_file_contains "CLAUDE.md has web rules" "$TMP/CLAUDE.md" "Web / Frontend"
 
 popd > /dev/null; rm -rf "$TMP"
 

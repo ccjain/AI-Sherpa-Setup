@@ -98,7 +98,10 @@ print_summary() {
   echo -e "${CYAN}======================================================${NC}\n"
 }
 
-# Source guard — prevents main() running when sourced by test script
+# Source guard — prevents main() running when sourced by tests.
+# main() is added in Task 2; this guard is a no-op until then.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  main "$@"
+  declare -f main &>/dev/null && main "$@" || {
+    echo "[AI Sherpa] setup.sh loaded successfully. Run after Task 2 adds main()."
+  }
 fi
