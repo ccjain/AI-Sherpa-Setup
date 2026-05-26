@@ -10,12 +10,16 @@ AI Sherpa gives every developer a pre-configured Claude Code environment with:
 - Codebase knowledge graph via graphify
 
 ## Quick Start (Windows)
+**Prerequisites:** Git and Node.js (v20+) must be installed. `setup.bat` will install Claude Code CLI automatically.
+
 1. Clone this repo: `git clone <this-repo-url>`
 2. Run: `setup.bat`
 3. Choose your domain when prompted
 4. Start Claude Code: `claude`
 
 ## Quick Start (Linux/macOS)
+**Prerequisites:** Git and Node.js (v20+) must be installed. `setup.sh` will install Claude Code CLI automatically.
+
 1. Clone this repo: `git clone <this-repo-url>`
 2. Run: `./setup.sh`
 3. Choose your domain when prompted
