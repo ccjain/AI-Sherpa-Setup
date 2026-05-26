@@ -6,7 +6,7 @@ These rules apply to all data science and ML projects. They extend core/CLAUDE.m
 
 ## Always Do (Data Science)
 
-1. Check dataset size before loading — never load full dataset into memory without confirming it fits
+1. Check dataset size before loading (`df.shape`, `wc -l`, or file size check) — never load a full dataset without confirming it fits in memory
 2. Version data and models alongside code (use DVC, MLflow, or equivalent)
 3. Use environment variables or config files for file paths — never hardcode
 4. Flag any risk of data leakage between train/test splits when reviewing ML pipelines
@@ -16,11 +16,11 @@ These rules apply to all data science and ML projects. They extend core/CLAUDE.m
 
 ## Never Do (Data Science)
 
-1. Load a full dataset without first checking its size (`df.shape`, `wc -l`, file size)
-2. Hardcode absolute file paths — use `pathlib.Path` or config variables
-3. Commit large data files or model weights to Git — use DVC or cloud storage
-4. Use the same data split for both hyperparameter tuning and final evaluation (data leakage)
-5. Suppress warnings from ML libraries without understanding their cause
+1. Hardcode absolute file paths — use `pathlib.Path` or config variables
+2. Commit large data files or model weights to Git — use DVC or cloud storage
+3. Use the same data split for both hyperparameter tuning and final evaluation (data leakage)
+4. Suppress warnings from ML libraries without understanding their cause
+5. Process or load datasets that may contain PII without first asking the developer to confirm the data is anonymized and approved for use
 
 ---
 

@@ -21,6 +21,7 @@ These rules apply to all DevOps and platform engineering projects. They extend c
 3. Delete infrastructure (databases, queues, storage buckets) without an explicit rollback plan approved by a human
 4. Store secrets in environment variables in CI/CD pipeline YAML files — use the platform's secret store
 5. Give IAM roles or service accounts more permissions than they need (principle of least privilege)
+6. Add secrets or credentials as plaintext values in `docker-compose.yml` — always use environment variable references (`${VAR_NAME}`) pointing to the platform's secret store
 
 ---
 

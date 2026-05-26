@@ -20,7 +20,7 @@ If found, stop and report:
 Never assume permission. Explicit developer confirmation required every session.
 
 ### Step 2 — Architecture Understanding
-Before any task, read and understand the existing architecture. Use graphify to explore the codebase. If the architecture is unclear or undocumented, ask the developer to explain it before writing any code.
+Before any task, read and understand the existing architecture. Use graphify to explore the codebase (graphify is the codebase knowledge-graph tool — installed by setup.bat/setup.sh, invoked via `/graphify` in Claude Code). If the architecture is unclear or undocumented, ask the developer to explain it before writing any code.
 
 ---
 
@@ -47,7 +47,7 @@ Before any task, read and understand the existing architecture. Use graphify to 
 6. Generate code for unknown APIs without checking their documentation first
 7. Make architectural changes without a written plan reviewed by a human
 8. Add features beyond what was explicitly requested (YAGNI)
-9. Add error handling for scenarios that cannot happen
+9. Add error handling for scenarios that are provably impossible given the current system design — if unsure, ask before skipping
 10. Add comments explaining WHAT code does — only WHY if non-obvious
 11. Push to main/master directly
 12. Assume a task is done without running it

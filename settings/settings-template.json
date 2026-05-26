@@ -12,7 +12,6 @@
       "Read(**/.aws/**)",
       "Read(**/.ssh/**)",
       "Read(**/config/database.yml)",
-      "Read(**/docker-compose*.yml)",
       "Write(**/.env)",
       "Write(**/.env.*)"
     ]
