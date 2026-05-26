@@ -19,6 +19,7 @@ function Install-NodeJS {
     if (-not (Test-CommandExists "node")) {
         Write-Info "Node.js not found. Installing via winget..."
         winget install OpenJS.NodeJS --silent --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -ne 0) { Write-Err "winget failed to install Node.js (exit $LASTEXITCODE). Install manually from https://nodejs.org then re-run."; exit 1 }
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
                     [System.Environment]::GetEnvironmentVariable("Path","User")
         Write-Info "Node.js installed. If 'node' is still not found, close and reopen this terminal."
@@ -31,6 +32,7 @@ function Install-Git {
     if (-not (Test-CommandExists "git")) {
         Write-Info "Git not found. Installing via winget..."
         winget install Git.Git --silent --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -ne 0) { Write-Err "winget failed to install Git (exit $LASTEXITCODE). Install manually from https://git-scm.com then re-run."; exit 1 }
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
                     [System.Environment]::GetEnvironmentVariable("Path","User")
         Write-Info "Git installed."
@@ -43,6 +45,7 @@ function Install-ClaudeCode {
     if (-not (Test-CommandExists "claude")) {
         Write-Info "Claude Code not found. Installing..."
         npm install -g @anthropic-ai/claude-code
+        if ($LASTEXITCODE -ne 0) { Write-Err "npm failed to install Claude Code (exit $LASTEXITCODE). Check your Node.js installation."; exit 1 }
         Write-Info "Claude Code installed."
     } else {
         Write-Info "Claude Code found."
@@ -56,6 +59,7 @@ function Install-CoreSkills {
     npx skillsadd mattpocock/skills
     npx skillsadd pbakaus/impeccable
     npx skillsadd sentry/dev
+    if ($LASTEXITCODE -ne 0) { Write-Warn "One or more core skill installs may have failed. Check output above and re-run if needed." }
     Write-Info "Core skills installed."
 }
 
@@ -69,10 +73,12 @@ function Install-DomainSkills {
             npx skillsadd vercel-labs/next-skills
             npx skillsadd vercel-labs/agent-browser
             npx skillsadd shadcn/ui
+            if ($LASTEXITCODE -ne 0) { Write-Warn "One or more domain skill installs may have failed. Check output above and re-run if needed." }
         }
         "devops" {
             Write-Info "Installing DevOps skills..."
             npx skillsadd microsoft/azure-skills
+            if ($LASTEXITCODE -ne 0) { Write-Warn "DevOps skill install may have failed. Check output above and re-run if needed." }
         }
         default {
             Write-Info "No additional skills for $Domain - core skills + CLAUDE.md rules apply."
@@ -107,6 +113,11 @@ function Write-ProjectSettings {
 function Copy-ClaudeMd {
     param([string]$Domain, [string]$ProjectType)
     $source = "$ScriptDir\domains\$Domain\CLAUDE.md"
+    if (-not (Test-Path $source)) {
+        Write-Err "Domain CLAUDE.md not found at: $source"
+        Write-Err "Is '$Domain' a valid domain? Valid: embedded, web, backend, data, devops"
+        exit 1
+    }
     $target = "$(Get-Location)\CLAUDE.md"
     if ($ProjectType -eq "existing" -and (Test-Path $target)) {
         Write-Warn "Appending domain rules to existing CLAUDE.md (original preserved)"
@@ -126,6 +137,7 @@ function Invoke-Update {
     npx skillsadd mattpocock/skills
     npx skillsadd pbakaus/impeccable
     npx skillsadd sentry/dev
+    if ($LASTEXITCODE -ne 0) { Write-Warn "One or more core skill installs may have failed. Check output above and re-run if needed." }
     Write-GlobalSettings
     Write-Info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
@@ -167,7 +179,7 @@ $currentPath = (Get-Location).Path
 if ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath -eq $ScriptDir)) {
     Write-Err "You are running setup from inside the AI Sherpa repo."
     Write-Err "Please cd to your project directory first, then run:"
-    Write-Err "  setup.bat"
+    Write-Err "  setup.bat  (or: powershell -File `"$ScriptDir\setup.ps1`")"
     exit 1
 }
 
@@ -190,7 +202,7 @@ $domainChoice = Read-Host "Enter number [1-5]"
 
 $domainMap = @{ "1"="embedded"; "2"="web"; "3"="backend"; "4"="data"; "5"="devops" }
 if (-not $domainMap.ContainsKey($domainChoice)) {
-    Write-Err "Invalid choice: $domainChoice. Run setup.bat again."
+    Write-Err "Invalid choice: $domainChoice. Run setup.bat (or setup.ps1) again."
     exit 1
 }
 $domain = $domainMap[$domainChoice]
@@ -205,7 +217,7 @@ $projectChoice = Read-Host "Enter number [1-2]"
 
 $ptMap = @{ "1"="new"; "2"="existing" }
 if (-not $ptMap.ContainsKey($projectChoice)) {
-    Write-Err "Invalid choice: $projectChoice. Run setup.bat again."
+    Write-Err "Invalid choice: $projectChoice. Run setup.bat (or setup.ps1) again."
     exit 1
 }
 $projectType = $ptMap[$projectChoice]
