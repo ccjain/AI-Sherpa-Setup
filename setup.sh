@@ -94,19 +94,19 @@ print_summary() {
   echo "  2. Index your codebase: /graphify   (run inside Claude Code)"
   echo "  3. Start coding — AI Sherpa rules are active automatically"
   echo ""
-  echo "  Update later: ./setup.sh --update"
+  echo "  Update later: bash \"$SCRIPT_DIR/setup.sh\" --update"
   echo -e "${CYAN}======================================================${NC}\n"
 }
 
 run_update() {
-  log_info "Updating AI Sherpa skills..."
+  log_info "Updating AI Sherpa core skills..."
   npx skillsadd obra/superpowers
   npx skillsadd safishamsi/graphify
   npx skillsadd mattpocock/skills
   npx skillsadd pbakaus/impeccable
   npx skillsadd sentry/dev
   write_settings
-  log_info "Update complete. Your project CLAUDE.md was NOT modified."
+  log_info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
 
 main() {
@@ -119,9 +119,7 @@ main() {
     esac
   done
 
-  echo -e "${CYAN}"
-  echo "  AI Sherpa — Company-wide Claude Code Setup"
-  echo -e "${NC}"
+  echo -e "${CYAN}  AI Sherpa — Company-wide Claude Code Setup${NC}"
 
   if [[ "$UPDATE_MODE" == true ]]; then
     run_update
@@ -141,10 +139,16 @@ main() {
 
   if ! check_command node; then
     log_info "Node.js not found. Installing via nvm..."
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+    # --fail: abort on HTTP error codes (prevents silent 404→bash execution)
+    curl --fail -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
     export NVM_DIR="$HOME/.nvm"
     # shellcheck source=/dev/null
     [[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh"
+    if ! check_command nvm; then
+      log_error "nvm installed but could not be sourced from $NVM_DIR/nvm.sh"
+      log_error "Close this terminal, reopen, and re-run setup.sh"
+      exit 1
+    fi
     nvm install 20
     nvm use 20
     log_info "Node.js $(node --version) installed via nvm."
