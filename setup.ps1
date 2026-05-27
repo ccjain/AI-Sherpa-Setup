@@ -54,12 +54,8 @@ function Install-ClaudeCode {
 
 function Install-CoreSkills {
     Write-Info "Installing core skills (this may take 1-2 minutes)..."
-    npx skillsadd obra/superpowers
-    npx skillsadd safishamsi/graphify
-    npx skillsadd mattpocock/skills
-    npx skillsadd pbakaus/impeccable
-    npx skillsadd sentry/dev
-    if ($LASTEXITCODE -ne 0) { Write-Warn "One or more core skill installs may have failed. Check output above and re-run if needed." }
+    claude plugin install superpowers@claude-plugins-official --scope user
+    if ($LASTEXITCODE -ne 0) { Write-Warn "superpowers install may have failed. Check output above and re-run if needed." }
     Write-Info "Core skills installed."
 }
 
@@ -68,17 +64,10 @@ function Install-DomainSkills {
     switch ($Domain) {
         "web" {
             Write-Info "Installing web/frontend skills..."
-            npx skillsadd anthropics/skills
-            npx skillsadd vercel-labs/agent-skills
-            npx skillsadd vercel-labs/next-skills
-            npx skillsadd vercel-labs/agent-browser
-            npx skillsadd shadcn/ui
-            if ($LASTEXITCODE -ne 0) { Write-Warn "One or more domain skill installs may have failed. Check output above and re-run if needed." }
-        }
-        "devops" {
-            Write-Info "Installing DevOps skills..."
-            npx skillsadd microsoft/azure-skills
-            if ($LASTEXITCODE -ne 0) { Write-Warn "DevOps skill install may have failed. Check output above and re-run if needed." }
+            claude plugin install vercel@claude-plugins-official --scope user
+            if ($LASTEXITCODE -ne 0) { Write-Warn "vercel plugin install may have failed." }
+            claude plugin install playwright@claude-plugins-official --scope user
+            if ($LASTEXITCODE -ne 0) { Write-Warn "playwright plugin install may have failed." }
         }
         default {
             Write-Info "No additional skills for $Domain - core skills + CLAUDE.md rules apply."
@@ -150,12 +139,8 @@ function Write-GlobalClaudeMd {
 
 function Invoke-Update {
     Write-Info "Updating AI Sherpa core skills..."
-    npx skillsadd obra/superpowers
-    npx skillsadd safishamsi/graphify
-    npx skillsadd mattpocock/skills
-    npx skillsadd pbakaus/impeccable
-    npx skillsadd sentry/dev
-    if ($LASTEXITCODE -ne 0) { Write-Warn "One or more core skill installs may have failed. Check output above and re-run if needed." }
+    claude plugin update superpowers
+    if ($LASTEXITCODE -ne 0) { Write-Warn "superpowers update may have failed. Check output above and re-run if needed." }
     Write-GlobalSettings
     Write-Info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }

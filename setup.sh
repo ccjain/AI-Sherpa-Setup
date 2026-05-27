@@ -50,11 +50,8 @@ copy_claude_md() {
 
 install_core_skills() {
   log_info "Installing core skills (this may take 1-2 minutes)..."
-  npx skillsadd obra/superpowers
-  npx skillsadd safishamsi/graphify
-  npx skillsadd mattpocock/skills
-  npx skillsadd pbakaus/impeccable
-  npx skillsadd sentry/dev
+  claude plugin install superpowers@claude-plugins-official --scope user \
+    || log_warn "superpowers install may have failed. Check output above and re-run if needed."
   log_info "Core skills installed."
 }
 
@@ -63,17 +60,12 @@ install_domain_skills() {
   case "$domain" in
     web)
       log_info "Installing web/frontend skills..."
-      npx skillsadd anthropics/skills
-      npx skillsadd vercel-labs/agent-skills
-      npx skillsadd vercel-labs/next-skills
-      npx skillsadd vercel-labs/agent-browser
-      npx skillsadd shadcn/ui
+      claude plugin install vercel@claude-plugins-official --scope user \
+        || log_warn "vercel plugin install may have failed."
+      claude plugin install playwright@claude-plugins-official --scope user \
+        || log_warn "playwright plugin install may have failed."
       ;;
-    devops)
-      log_info "Installing DevOps skills..."
-      npx skillsadd microsoft/azure-skills
-      ;;
-    embedded|backend|data)
+    embedded|backend|data|devops)
       log_info "No additional skills for $domain — core skills + CLAUDE.md rules apply."
       ;;
   esac
@@ -100,11 +92,8 @@ print_summary() {
 
 run_update() {
   log_info "Updating AI Sherpa core skills..."
-  npx skillsadd obra/superpowers
-  npx skillsadd safishamsi/graphify
-  npx skillsadd mattpocock/skills
-  npx skillsadd pbakaus/impeccable
-  npx skillsadd sentry/dev
+  claude plugin update superpowers \
+    || log_warn "superpowers update may have failed. Check output above and re-run if needed."
   write_settings
   log_info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
