@@ -1,6 +1,7 @@
 {
   "marketplaces": [
     "anthropics/knowledge-work-plugins",
+    "anthropics/financial-services",
     "jeffallan/claude-skills"
   ],
   "global": [
@@ -72,12 +73,23 @@
       { "name": "cli-developer",         "marketplace": "jeffallan" },
       { "name": "atlassian-mcp",         "marketplace": "jeffallan" }
     ],
+    "uiux": [
+      { "name": "figma",          "marketplace": "claude-plugins-official" },
+      { "name": "frontend-design","marketplace": "claude-plugins-official" }
+    ],
     "marketing":   [{ "name": "marketing",        "marketplace": "knowledge-work-plugins" }],
     "sales": [
       { "name": "sales",                "marketplace": "knowledge-work-plugins" },
       { "name": "salesforce-developer", "marketplace": "jeffallan" }
     ],
-    "finance":     [{ "name": "finance",          "marketplace": "knowledge-work-plugins" }],
+    "finance": [
+      { "name": "finance",            "marketplace": "knowledge-work-plugins" },
+      { "name": "financial-analysis", "marketplace": "claude-for-financial-services" },
+      { "name": "month-end-closer",   "marketplace": "claude-for-financial-services" },
+      { "name": "gl-reconciler",      "marketplace": "claude-for-financial-services" },
+      { "name": "model-builder",      "marketplace": "claude-for-financial-services" },
+      { "name": "statement-auditor",  "marketplace": "claude-for-financial-services" }
+    ],
     "service":     [{ "name": "customer-support", "marketplace": "knowledge-work-plugins" }],
     "procurement": [{ "name": "operations",       "marketplace": "knowledge-work-plugins" }]
   }

@@ -258,7 +258,8 @@ $isUserLevelRun = ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath 
 
 $domainMap = @{
     "1"="embedded"; "2"="web"; "3"="backend"; "4"="data"; "5"="devops";
-    "6"="marketing"; "7"="sales"; "8"="finance"; "9"="service"; "10"="procurement"
+    "6"="marketing"; "7"="sales"; "8"="finance"; "9"="service"; "10"="procurement";
+    "11"="uiux"
 }
 
 # Prerequisites (both paths)
@@ -282,8 +283,9 @@ Write-Host "  [7] Sales"
 Write-Host "  [8] Finance / Accounting"
 Write-Host "  [9] Customer Service / Support"
 Write-Host "  [10] Procurement / Operations"
+Write-Host "  [11] UI/UX Design"
 Write-Host ""
-$domainChoice = Read-Host "Enter number [1-10]"
+$domainChoice = Read-Host "Enter number [1-11]"
 if (-not $domainMap.ContainsKey($domainChoice)) {
     Write-Err "Invalid choice: $domainChoice. Run setup.bat again."
     exit 1

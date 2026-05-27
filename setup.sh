@@ -273,8 +273,9 @@ main() {
   echo "  [8] Finance / Accounting"
   echo "  [9] Customer Service / Support"
   echo "  [10] Procurement / Operations"
+  echo "  [11] UI/UX Design"
   echo ""
-  read -rp "Enter number [1-10]: " domain_choice
+  read -rp "Enter number [1-11]: " domain_choice
 
   local domain
   case "$domain_choice" in
@@ -288,6 +289,7 @@ main() {
     8)  domain="finance" ;;
     9)  domain="service" ;;
     10) domain="procurement" ;;
+    11) domain="uiux" ;;
     *)  log_error "Invalid choice: $domain_choice. Run the script again."; exit 1 ;;
   esac
 
