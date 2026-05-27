@@ -178,6 +178,31 @@ SCRIPT_DIR_BAK="$SCRIPT_DIR"; SCRIPT_DIR="$TMP"
 assert_false "exits non-zero when plugins.json missing" "$RC"
 SCRIPT_DIR="$SCRIPT_DIR_BAK"; rm -rf "$TMP"
 
+# --- Test run_update reads global plugins from plugins.json ---
+echo "=== Test: run_update updates plugins from plugins.json ==="
+TMP=$(mktemp -d)
+MOCK_LOG="$TMP/claude_calls.log"
+cat > "$TMP/plugins.json" << 'EOF'
+{
+  "global": [
+    { "name": "superpowers", "marketplace": "claude-plugins-official" }
+  ],
+  "domains": {}
+}
+EOF
+mkdir -p "$TMP/settings"
+cat > "$TMP/settings/settings-template.json" << 'EOF'
+{ "permissions": {} }
+EOF
+HOME_BAK="$HOME"; HOME="$TMP"
+SCRIPT_DIR_BAK="$SCRIPT_DIR"; SCRIPT_DIR="$TMP"
+claude() { echo "claude $*" >> "$MOCK_LOG"; }
+export -f claude
+run_update
+assert_file_contains "run_update calls plugin update" "$MOCK_LOG" \
+  "plugin update superpowers"
+HOME="$HOME_BAK"; SCRIPT_DIR="$SCRIPT_DIR_BAK"; unset -f claude; rm -rf "$TMP"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

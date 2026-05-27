@@ -142,8 +142,15 @@ print_summary() {
 
 run_update() {
   log_info "Updating AI Sherpa core skills..."
-  claude plugin update superpowers \
-    || log_warn "superpowers update may have failed. Check output above and re-run if needed."
+  local plugin_list
+  plugin_list=$(_read_plugins "global") || { log_error "Cannot read plugins.json — aborting."; exit 1; }
+  if [[ -n "$plugin_list" ]]; then
+    while IFS='|' read -r type name source; do
+      [[ -z "$type" ]] && continue
+      claude plugin update "$name" \
+        || log_warn "$name update may have failed — re-run --update to retry."
+    done <<< "$plugin_list"
+  fi
   write_settings
   log_info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
