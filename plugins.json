@@ -1,0 +1,15 @@
+{
+  "global": [
+    { "name": "superpowers", "marketplace": "claude-plugins-official" }
+  ],
+  "domains": {
+    "embedded": [],
+    "web": [
+      { "name": "vercel",     "marketplace": "claude-plugins-official" },
+      { "name": "playwright", "marketplace": "claude-plugins-official" }
+    ],
+    "backend": [],
+    "data":    [],
+    "devops":  []
+  }
+}
