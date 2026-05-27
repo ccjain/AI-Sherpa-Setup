@@ -174,13 +174,21 @@ if ($Update) {
     exit 0
 }
 
-# Guard: warn if run from inside the ai-sherpa repo itself
+# Guard: if launched from inside the AI Sherpa repo (e.g. double-click), show folder picker
 $currentPath = (Get-Location).Path
 if ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath -eq $ScriptDir)) {
-    Write-Err "You are running setup from inside the AI Sherpa repo."
-    Write-Err "Please cd to your project directory first, then run:"
-    Write-Err "  setup.bat  (or: powershell -File `"$ScriptDir\setup.ps1`")"
-    exit 1
+    Write-Warn "Select your project folder in the dialog that opens..."
+    Add-Type -AssemblyName System.Windows.Forms
+    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = "Select the project folder to configure AI Sherpa in"
+    $dialog.ShowNewFolderButton = $true
+    $dialogResult = $dialog.ShowDialog()
+    if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK -or [string]::IsNullOrWhiteSpace($dialog.SelectedPath)) {
+        Write-Err "No folder selected. Run setup.bat again and select a project folder."
+        exit 1
+    }
+    Set-Location $dialog.SelectedPath
+    Write-Info "Project folder: $($dialog.SelectedPath)"
 }
 
 # Prerequisites

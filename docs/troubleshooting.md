@@ -88,15 +88,9 @@ Then re-run `setup.bat`.
 
 **Symptom:** After setup completes, `CLAUDE.md` does not exist in your project directory.
 
-**Likely causes:**
-1. You ran `setup.bat` from inside the AI Sherpa repo directory — it detects this and exits with a warning
-2. You ran setup from a different directory than your project
+**Likely cause:** The folder picker appeared but you selected the wrong folder, or dismissed it without selecting.
 
-**Fix:** Navigate to your actual project directory and re-run setup:
-```
-cd C:\path\to\your-project
-C:\tools\ai-sherpa\setup.bat
-```
+**Fix:** Re-run `setup.bat`. When the folder picker appears, select your project folder (not the AI Sherpa folder).
 
 ---
 
