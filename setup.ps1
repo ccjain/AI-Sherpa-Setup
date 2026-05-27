@@ -170,6 +170,25 @@ function Write-GlobalClaudeMd {
     Write-Info "Domain rules written to $target (active for all projects)"
 }
 
+function Install-Graphify {
+    $pipCmd = $null
+    if (Test-CommandExists "pip3") { $pipCmd = "pip3" }
+    elseif (Test-CommandExists "pip") { $pipCmd = "pip" }
+    if (-not $pipCmd) {
+        Write-Warn "Python pip not found - Graphify skipped. Install Python 3 and re-run setup to enable /graphify."
+        return
+    }
+    Write-Info "Installing Graphify knowledge graph skill..."
+    & $pipCmd install --quiet graphifyy
+    if ($LASTEXITCODE -ne 0) { Write-Warn "graphifyy install failed - re-run setup after verifying pip."; return }
+    graphify install
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "graphify install failed - /graphify command may not be available."
+    } else {
+        Write-Info "Graphify ready. Run /graphify inside Claude Code to index your codebase."
+    }
+}
+
 function Invoke-Update {
     Write-Info "Updating AI Sherpa core skills..."
     $plugins = Read-PluginConfig -Section "global"
@@ -178,6 +197,7 @@ function Invoke-Update {
         if ($LASTEXITCODE -ne 0) { Write-Warn "$($entry.name) update may have failed - re-run --update to retry." }
     }
     Write-GlobalSettings
+    Install-Graphify
     Write-Info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
 
@@ -253,6 +273,7 @@ Write-GlobalSettings
 if ($isUserLevelRun) {
     # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
     Write-GlobalClaudeMd $domain
+    Install-Graphify
     Print-Summary $domain -UserLevel
 } else {
     # Project-level: write CLAUDE.md and settings into current project directory
@@ -270,5 +291,6 @@ if ($isUserLevelRun) {
     $projectType = $ptMap[$projectChoice]
     Write-ProjectSettings
     Copy-ClaudeMd $domain $projectType
+    Install-Graphify
     Print-Summary $domain
 }

@@ -121,13 +121,19 @@ cp ~/tools/ai-sherpa/settings/settings-template.json ~/.claude/settings.json
 
 **Symptom:** Typing `/graphify` in Claude Code gives an error or does nothing.
 
-**Cause:** The graphify skill was not installed, or Claude Code was not restarted after skill installation.
+**Cause:** Graphify was not installed (Python pip was missing during setup), or Claude Code needs a restart.
 
 **Fix:**
 1. Exit Claude Code: `Ctrl+C`
-2. Run: `npx skillsadd safishamsi/graphify`
+2. Install Graphify manually:
+   ```bash
+   pip install graphifyy && graphify install
+   ```
+   On Windows, if `pip` is not found, install Python 3 from https://python.org first.
 3. Restart Claude Code: `claude`
 4. Try `/graphify` again
+
+Alternatively, re-run `setup.bat` (or `setup.sh`) after Python is installed — setup installs Graphify automatically.
 
 ---
 

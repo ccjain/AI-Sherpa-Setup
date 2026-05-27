@@ -140,6 +140,22 @@ print_summary() {
   echo -e "${CYAN}======================================================${NC}\n"
 }
 
+install_graphify() {
+  local pip_cmd=""
+  if check_command pip3; then pip_cmd="pip3"
+  elif check_command pip; then pip_cmd="pip"
+  else
+    log_warn "Python pip not found — Graphify skipped. Install Python 3 and re-run setup to enable /graphify."
+    return
+  fi
+  log_info "Installing Graphify knowledge graph skill..."
+  "$pip_cmd" install --quiet graphifyy \
+    || { log_warn "graphifyy install failed — re-run setup after verifying pip."; return; }
+  graphify install \
+    || log_warn "graphify install failed — /graphify command may not be available."
+  log_info "Graphify ready. Run /graphify inside Claude Code to index your codebase."
+}
+
 run_update() {
   log_info "Updating AI Sherpa core skills..."
   local plugin_list
@@ -152,6 +168,7 @@ run_update() {
     done <<< "$plugin_list"
   fi
   write_settings
+  install_graphify
   log_info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
 
@@ -258,6 +275,7 @@ main() {
   write_settings
   write_project_settings
   copy_claude_md "$domain" "$project_type"
+  install_graphify
   print_summary "$domain"
 }
 
