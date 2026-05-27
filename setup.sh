@@ -116,7 +116,7 @@ process.stdin.on('end', () => {
     log_info "Registering marketplace: $repo"
     claude plugin marketplace add "$repo" --scope user 2>/dev/null || true
     if [[ -n "$name" ]]; then
-      claude plugin marketplace update "$name" --scope user 2>/dev/null \
+      claude plugin marketplace update "$name" 2>/dev/null \
         || log_warn "Could not update marketplace $name — domain plugins may fail."
     fi
   done <<< "$entries"

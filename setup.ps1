@@ -100,7 +100,7 @@ function Register-Marketplaces {
         Write-Info "Registering marketplace: $repo"
         claude plugin marketplace add $repo --scope user 2>$null
         if ($name) {
-            claude plugin marketplace update $name --scope user 2>$null
+            claude plugin marketplace update $name 2>$null
             if ($LASTEXITCODE -ne 0) { Write-Warn "Could not update marketplace $name - domain plugins may fail." }
         }
     }
