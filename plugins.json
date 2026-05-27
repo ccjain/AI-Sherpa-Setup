@@ -1,12 +1,13 @@
 {
   "marketplaces": [
-    "anthropics/knowledge-work-plugins"
+    "anthropics/knowledge-work-plugins",
+    "jeffallan/claude-skills"
   ],
   "global": [
     { "name": "superpowers", "marketplace": "claude-plugins-official" }
   ],
   "domains": {
-    "embedded":    [],
+    "embedded":    [{ "name": "embedded-systems", "marketplace": "jeffallan" }],
     "web": [
       { "name": "vercel",     "marketplace": "claude-plugins-official" },
       { "name": "playwright", "marketplace": "claude-plugins-official" }
