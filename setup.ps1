@@ -86,6 +86,20 @@ function Install-Plugin {
     }
 }
 
+function Register-Marketplaces {
+    $configFile = "$ScriptDir\plugins.json"
+    if (-not (Test-Path $configFile)) { return }
+    try { $config = Get-Content $configFile -Raw | ConvertFrom-Json }
+    catch { return }
+    $marketplaces = $config.marketplaces
+    if (-not $marketplaces -or @($marketplaces).Count -eq 0) { return }
+    foreach ($marketplace in @($marketplaces)) {
+        Write-Info "Registering marketplace: $marketplace"
+        claude plugin marketplace add $marketplace --scope user 2>$null
+        if ($LASTEXITCODE -ne 0) { Write-Warn "Could not register $marketplace - domain plugins may fail." }
+    }
+}
+
 function Install-CoreSkills {
     Write-Info "Installing core skills (this may take 1-2 minutes)..."
     $plugins = Read-PluginConfig -Section "global"
@@ -191,6 +205,7 @@ function Install-Graphify {
 
 function Invoke-Update {
     Write-Info "Updating AI Sherpa core skills..."
+    Register-Marketplaces
     $plugins = Read-PluginConfig -Section "global"
     foreach ($entry in $plugins) {
         claude plugin update $entry.name
@@ -241,7 +256,10 @@ if ($Update) {
 $currentPath = (Get-Location).Path
 $isUserLevelRun = ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath -eq $ScriptDir))
 
-$domainMap = @{ "1"="embedded"; "2"="web"; "3"="backend"; "4"="data"; "5"="devops" }
+$domainMap = @{
+    "1"="embedded"; "2"="web"; "3"="backend"; "4"="data"; "5"="devops";
+    "6"="marketing"; "7"="sales"; "8"="finance"; "9"="service"; "10"="procurement"
+}
 
 # Prerequisites (both paths)
 Write-Info "Checking prerequisites..."
@@ -252,20 +270,28 @@ Install-ClaudeCode
 # Domain selection (both paths)
 Write-Host ""
 Write-Host "Which domain are you working in?"
+Write-Host "  --- Engineering ---"
 Write-Host "  [1] Embedded Software (C/C++, firmware, RTOS)"
 Write-Host "  [2] Web / Frontend (React, Vue, Angular, HTML/CSS)"
 Write-Host "  [3] Backend (Node.js, Python)"
 Write-Host "  [4] Data Science / ML"
 Write-Host "  [5] DevOps / Platform"
+Write-Host "  --- Business ---"
+Write-Host "  [6] Marketing"
+Write-Host "  [7] Sales"
+Write-Host "  [8] Finance / Accounting"
+Write-Host "  [9] Customer Service / Support"
+Write-Host "  [10] Procurement / Operations"
 Write-Host ""
-$domainChoice = Read-Host "Enter number [1-5]"
+$domainChoice = Read-Host "Enter number [1-10]"
 if (-not $domainMap.ContainsKey($domainChoice)) {
     Write-Err "Invalid choice: $domainChoice. Run setup.bat again."
     exit 1
 }
 $domain = $domainMap[$domainChoice]
 
-# Install skills + global settings (both paths)
+# Register extra marketplaces + install skills (both paths)
+Register-Marketplaces
 Install-CoreSkills
 Install-DomainSkills $domain
 Write-GlobalSettings

@@ -91,6 +91,30 @@ _install_plugin() {
   fi
 }
 
+register_marketplaces() {
+  local config_file="$SCRIPT_DIR/plugins.json"
+  if [[ ! -f "$config_file" ]]; then return; fi
+  local marketplaces
+  marketplaces=$(node -e "
+let raw = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', d => { raw += d; });
+process.stdin.on('end', () => {
+  let config;
+  try { config = JSON.parse(raw); } catch (e) { process.exit(0); }
+  const ms = config.marketplaces || [];
+  ms.forEach(m => process.stdout.write(m + '\n'));
+});
+" < "$config_file")
+  if [[ -z "$marketplaces" ]]; then return; fi
+  while IFS= read -r marketplace; do
+    [[ -z "$marketplace" ]] && continue
+    log_info "Registering marketplace: $marketplace"
+    claude plugin marketplace add "$marketplace" --scope user 2>/dev/null \
+      || log_warn "Could not register $marketplace — domain plugins may fail."
+  done <<< "$marketplaces"
+}
+
 install_core_skills() {
   log_info "Installing core skills (this may take 1-2 minutes)..."
   local plugin_list
@@ -158,6 +182,7 @@ install_graphify() {
 
 run_update() {
   log_info "Updating AI Sherpa core skills..."
+  register_marketplaces
   local plugin_list
   plugin_list=$(_read_plugins "global") || { log_error "Cannot read plugins.json — aborting."; exit 1; }
   if [[ -n "$plugin_list" ]]; then
@@ -236,22 +261,34 @@ main() {
   # --- Domain selection ---
   echo ""
   echo "Which domain are you working in?"
+  echo "  --- Engineering ---"
   echo "  [1] Embedded Software (C/C++, firmware, RTOS)"
   echo "  [2] Web / Frontend (React, Vue, Angular, HTML/CSS)"
   echo "  [3] Backend (Node.js, Python)"
   echo "  [4] Data Science / ML"
   echo "  [5] DevOps / Platform"
+  echo "  --- Business ---"
+  echo "  [6] Marketing"
+  echo "  [7] Sales"
+  echo "  [8] Finance / Accounting"
+  echo "  [9] Customer Service / Support"
+  echo "  [10] Procurement / Operations"
   echo ""
-  read -rp "Enter number [1-5]: " domain_choice
+  read -rp "Enter number [1-10]: " domain_choice
 
   local domain
   case "$domain_choice" in
-    1) domain="embedded" ;;
-    2) domain="web" ;;
-    3) domain="backend" ;;
-    4) domain="data" ;;
-    5) domain="devops" ;;
-    *) log_error "Invalid choice: $domain_choice. Run the script again."; exit 1 ;;
+    1)  domain="embedded" ;;
+    2)  domain="web" ;;
+    3)  domain="backend" ;;
+    4)  domain="data" ;;
+    5)  domain="devops" ;;
+    6)  domain="marketing" ;;
+    7)  domain="sales" ;;
+    8)  domain="finance" ;;
+    9)  domain="service" ;;
+    10) domain="procurement" ;;
+    *)  log_error "Invalid choice: $domain_choice. Run the script again."; exit 1 ;;
   esac
 
   # --- New or existing project ---
@@ -270,6 +307,7 @@ main() {
   esac
 
   # --- Install ---
+  register_marketplaces
   install_core_skills
   install_domain_skills "$domain"
   write_settings

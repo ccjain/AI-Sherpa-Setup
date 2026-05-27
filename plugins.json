@@ -1,15 +1,23 @@
 {
+  "marketplaces": [
+    "anthropics/knowledge-work-plugins"
+  ],
   "global": [
     { "name": "superpowers", "marketplace": "claude-plugins-official" }
   ],
   "domains": {
-    "embedded": [],
+    "embedded":    [],
     "web": [
       { "name": "vercel",     "marketplace": "claude-plugins-official" },
       { "name": "playwright", "marketplace": "claude-plugins-official" }
     ],
-    "backend": [],
-    "data":    [],
-    "devops":  []
+    "backend":     [],
+    "data":        [],
+    "devops":      [],
+    "marketing":   [{ "name": "marketing",        "marketplace": "knowledge-work-plugins" }],
+    "sales":       [{ "name": "sales",            "marketplace": "knowledge-work-plugins" }],
+    "finance":     [{ "name": "finance",          "marketplace": "knowledge-work-plugins" }],
+    "service":     [{ "name": "customer-support", "marketplace": "knowledge-work-plugins" }],
+    "procurement": [{ "name": "operations",       "marketplace": "knowledge-work-plugins" }]
   }
 }
