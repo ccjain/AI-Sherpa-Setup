@@ -4,19 +4,79 @@
     "jeffallan/claude-skills"
   ],
   "global": [
-    { "name": "superpowers", "marketplace": "claude-plugins-official" }
+    { "name": "superpowers",          "marketplace": "claude-plugins-official" },
+    { "name": "code-reviewer",        "marketplace": "jeffallan" },
+    { "name": "debugging-wizard",     "marketplace": "jeffallan" },
+    { "name": "test-master",          "marketplace": "jeffallan" },
+    { "name": "secure-code-guardian", "marketplace": "jeffallan" },
+    { "name": "security-reviewer",    "marketplace": "jeffallan" },
+    { "name": "architecture-designer","marketplace": "jeffallan" },
+    { "name": "legacy-modernizer",    "marketplace": "jeffallan" },
+    { "name": "feature-forge",        "marketplace": "jeffallan" }
   ],
   "domains": {
-    "embedded":    [{ "name": "embedded-systems", "marketplace": "jeffallan" }],
-    "web": [
-      { "name": "vercel",     "marketplace": "claude-plugins-official" },
-      { "name": "playwright", "marketplace": "claude-plugins-official" }
+    "embedded": [
+      { "name": "embedded-systems", "marketplace": "jeffallan" },
+      { "name": "cpp-pro",          "marketplace": "jeffallan" },
+      { "name": "rust-engineer",    "marketplace": "jeffallan" }
     ],
-    "backend":     [],
-    "data":        [],
-    "devops":      [],
+    "web": [
+      { "name": "vercel",              "marketplace": "claude-plugins-official" },
+      { "name": "playwright",          "marketplace": "claude-plugins-official" },
+      { "name": "react-expert",        "marketplace": "jeffallan" },
+      { "name": "nextjs-developer",    "marketplace": "jeffallan" },
+      { "name": "vue-expert",          "marketplace": "jeffallan" },
+      { "name": "angular-architect",   "marketplace": "jeffallan" },
+      { "name": "typescript-pro",      "marketplace": "jeffallan" },
+      { "name": "javascript-pro",      "marketplace": "jeffallan" },
+      { "name": "react-native-expert", "marketplace": "jeffallan" },
+      { "name": "flutter-expert",      "marketplace": "jeffallan" },
+      { "name": "wordpress-pro",       "marketplace": "jeffallan" },
+      { "name": "shopify-expert",      "marketplace": "jeffallan" }
+    ],
+    "backend": [
+      { "name": "python-pro",              "marketplace": "jeffallan" },
+      { "name": "golang-pro",              "marketplace": "jeffallan" },
+      { "name": "java-architect",          "marketplace": "jeffallan" },
+      { "name": "spring-boot-engineer",    "marketplace": "jeffallan" },
+      { "name": "nestjs-expert",           "marketplace": "jeffallan" },
+      { "name": "fastapi-expert",          "marketplace": "jeffallan" },
+      { "name": "django-expert",           "marketplace": "jeffallan" },
+      { "name": "kotlin-specialist",       "marketplace": "jeffallan" },
+      { "name": "csharp-developer",        "marketplace": "jeffallan" },
+      { "name": "dotnet-core-expert",      "marketplace": "jeffallan" },
+      { "name": "microservices-architect", "marketplace": "jeffallan" },
+      { "name": "api-designer",            "marketplace": "jeffallan" },
+      { "name": "graphql-architect",       "marketplace": "jeffallan" },
+      { "name": "websocket-engineer",      "marketplace": "jeffallan" }
+    ],
+    "data": [
+      { "name": "ml-pipeline",       "marketplace": "jeffallan" },
+      { "name": "rag-architect",      "marketplace": "jeffallan" },
+      { "name": "fine-tuning-expert", "marketplace": "jeffallan" },
+      { "name": "prompt-engineer",    "marketplace": "jeffallan" },
+      { "name": "pandas-pro",         "marketplace": "jeffallan" },
+      { "name": "spark-engineer",     "marketplace": "jeffallan" },
+      { "name": "sql-pro",            "marketplace": "jeffallan" },
+      { "name": "database-optimizer", "marketplace": "jeffallan" },
+      { "name": "postgres-pro",       "marketplace": "jeffallan" }
+    ],
+    "devops": [
+      { "name": "devops-engineer",       "marketplace": "jeffallan" },
+      { "name": "kubernetes-specialist", "marketplace": "jeffallan" },
+      { "name": "terraform-engineer",    "marketplace": "jeffallan" },
+      { "name": "cloud-architect",       "marketplace": "jeffallan" },
+      { "name": "sre-engineer",          "marketplace": "jeffallan" },
+      { "name": "monitoring-expert",     "marketplace": "jeffallan" },
+      { "name": "chaos-engineer",        "marketplace": "jeffallan" },
+      { "name": "cli-developer",         "marketplace": "jeffallan" },
+      { "name": "atlassian-mcp",         "marketplace": "jeffallan" }
+    ],
     "marketing":   [{ "name": "marketing",        "marketplace": "knowledge-work-plugins" }],
-    "sales":       [{ "name": "sales",            "marketplace": "knowledge-work-plugins" }],
+    "sales": [
+      { "name": "sales",                "marketplace": "knowledge-work-plugins" },
+      { "name": "salesforce-developer", "marketplace": "jeffallan" }
+    ],
     "finance":     [{ "name": "finance",          "marketplace": "knowledge-work-plugins" }],
     "service":     [{ "name": "customer-support", "marketplace": "knowledge-work-plugins" }],
     "procurement": [{ "name": "operations",       "marketplace": "knowledge-work-plugins" }]
