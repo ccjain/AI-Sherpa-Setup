@@ -130,6 +130,24 @@ function Copy-ClaudeMd {
     Write-Info "Domain CLAUDE.md installed at $target"
 }
 
+function Write-GlobalClaudeMd {
+    param([string]$Domain)
+    $source = "$ScriptDir\domains\$Domain\CLAUDE.md"
+    if (-not (Test-Path $source)) {
+        Write-Err "Domain CLAUDE.md not found at: $source"
+        exit 1
+    }
+    $claudeDir  = "$env:USERPROFILE\.claude"
+    $target     = "$claudeDir\CLAUDE.md"
+    if (-not (Test-Path $claudeDir)) { New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null }
+    if (Test-Path $target) {
+        Copy-Item $target "$target.bak" -Force
+        Write-Warn "Backed up existing ~/.claude/CLAUDE.md to CLAUDE.md.bak"
+    }
+    Copy-Item $source $target -Force
+    Write-Info "Domain rules written to $target (active for all projects)"
+}
+
 function Invoke-Update {
     Write-Info "Updating AI Sherpa core skills..."
     npx skillsadd obra/superpowers
@@ -143,23 +161,27 @@ function Invoke-Update {
 }
 
 function Print-Summary {
-    param([string]$Domain)
-    $here = Get-Location
+    param([string]$Domain, [switch]$UserLevel)
     Write-Host ""
     Write-Host "======================================================" -ForegroundColor Cyan
     Write-Host "  AI Sherpa Setup Complete" -ForegroundColor Cyan
     Write-Host "======================================================" -ForegroundColor Cyan
     Write-Host "  Domain:   $Domain"
-    Write-Host "  Settings: $env:USERPROFILE\.claude\settings.json  (global)"
-    Write-Host "  Settings: $here\.claude\settings.json  (project-level)"
-    Write-Host "  Rules:    CLAUDE.md installed in $here"
+    Write-Host "  Settings: $env:USERPROFILE\.claude\settings.json"
+    if ($UserLevel) {
+        Write-Host "  Rules:    $env:USERPROFILE\.claude\CLAUDE.md  (all projects)"
+    } else {
+        $here = Get-Location
+        Write-Host "  Settings: $here\.claude\settings.json  (project)"
+        Write-Host "  Rules:    $here\CLAUDE.md  (this project)"
+    }
     Write-Host ""
     Write-Host "  Next steps:"
     Write-Host "  1. Start Claude Code:   claude"
     Write-Host "  2. Index your codebase: /graphify   (run inside Claude Code)"
     Write-Host "  3. Start coding -- AI Sherpa rules are active automatically"
     Write-Host ""
-    Write-Host "  Update later: powershell -File `"$ScriptDir\setup.ps1`" -Update"
+    Write-Host "  Update later: `"$ScriptDir\setup.bat`" --update"
     Write-Host "======================================================" -ForegroundColor Cyan
     Write-Host ""
 }
@@ -174,30 +196,19 @@ if ($Update) {
     exit 0
 }
 
-# Guard: if launched from inside the AI Sherpa repo (e.g. double-click), show folder picker
+# Detect whether this is a user-level (double-click) or project-level run
 $currentPath = (Get-Location).Path
-if ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath -eq $ScriptDir)) {
-    Write-Warn "Select your project folder in the dialog that opens..."
-    Add-Type -AssemblyName System.Windows.Forms
-    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "Select the project folder to configure AI Sherpa in"
-    $dialog.ShowNewFolderButton = $true
-    $dialogResult = $dialog.ShowDialog()
-    if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK -or [string]::IsNullOrWhiteSpace($dialog.SelectedPath)) {
-        Write-Err "No folder selected. Run setup.bat again and select a project folder."
-        exit 1
-    }
-    Set-Location $dialog.SelectedPath
-    Write-Info "Project folder: $($dialog.SelectedPath)"
-}
+$isUserLevelRun = ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath -eq $ScriptDir))
 
-# Prerequisites
+$domainMap = @{ "1"="embedded"; "2"="web"; "3"="backend"; "4"="data"; "5"="devops" }
+
+# Prerequisites (both paths)
 Write-Info "Checking prerequisites..."
 Install-NodeJS
 Install-Git
 Install-ClaudeCode
 
-# Domain selection
+# Domain selection (both paths)
 Write-Host ""
 Write-Host "Which domain are you working in?"
 Write-Host "  [1] Embedded Software (C/C++, firmware, RTOS)"
@@ -207,33 +218,36 @@ Write-Host "  [4] Data Science / ML"
 Write-Host "  [5] DevOps / Platform"
 Write-Host ""
 $domainChoice = Read-Host "Enter number [1-5]"
-
-$domainMap = @{ "1"="embedded"; "2"="web"; "3"="backend"; "4"="data"; "5"="devops" }
 if (-not $domainMap.ContainsKey($domainChoice)) {
-    Write-Err "Invalid choice: $domainChoice. Run setup.bat (or setup.ps1) again."
+    Write-Err "Invalid choice: $domainChoice. Run setup.bat again."
     exit 1
 }
 $domain = $domainMap[$domainChoice]
 
-# New or existing project
-Write-Host ""
-Write-Host "New project or existing project?"
-Write-Host "  [1] New project"
-Write-Host "  [2] Existing project (CLAUDE.md will be appended, not replaced)"
-Write-Host ""
-$projectChoice = Read-Host "Enter number [1-2]"
-
-$ptMap = @{ "1"="new"; "2"="existing" }
-if (-not $ptMap.ContainsKey($projectChoice)) {
-    Write-Err "Invalid choice: $projectChoice. Run setup.bat (or setup.ps1) again."
-    exit 1
-}
-$projectType = $ptMap[$projectChoice]
-
-# Install
+# Install skills + global settings (both paths)
 Install-CoreSkills
 Install-DomainSkills $domain
 Write-GlobalSettings
-Write-ProjectSettings
-Copy-ClaudeMd $domain $projectType
-Print-Summary $domain
+
+if ($isUserLevelRun) {
+    # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
+    Write-GlobalClaudeMd $domain
+    Print-Summary $domain -UserLevel
+} else {
+    # Project-level: write CLAUDE.md and settings into current project directory
+    Write-Host ""
+    Write-Host "New project or existing project?"
+    Write-Host "  [1] New project"
+    Write-Host "  [2] Existing project (CLAUDE.md will be appended, not replaced)"
+    Write-Host ""
+    $projectChoice = Read-Host "Enter number [1-2]"
+    $ptMap = @{ "1"="new"; "2"="existing" }
+    if (-not $ptMap.ContainsKey($projectChoice)) {
+        Write-Err "Invalid choice: $projectChoice. Run setup.bat again."
+        exit 1
+    }
+    $projectType = $ptMap[$projectChoice]
+    Write-ProjectSettings
+    Copy-ClaudeMd $domain $projectType
+    Print-Summary $domain
+}
