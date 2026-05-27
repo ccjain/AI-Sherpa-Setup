@@ -94,8 +94,8 @@ _install_plugin() {
 register_marketplaces() {
   local config_file="$SCRIPT_DIR/plugins.json"
   if [[ ! -f "$config_file" ]]; then return; fi
-  local marketplaces
-  marketplaces=$(node -e "
+  local entries
+  entries=$(node -e "
 let raw = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', d => { raw += d; });
@@ -103,16 +103,23 @@ process.stdin.on('end', () => {
   let config;
   try { config = JSON.parse(raw); } catch (e) { process.exit(0); }
   const ms = config.marketplaces || [];
-  ms.forEach(m => process.stdout.write(m + '\n'));
+  ms.forEach(m => {
+    const repo = typeof m === 'string' ? m : (m.repo || '');
+    const name = typeof m === 'string' ? '' : (m.name || '');
+    process.stdout.write(repo + '|' + name + '\n');
+  });
 });
 " < "$config_file")
-  if [[ -z "$marketplaces" ]]; then return; fi
-  while IFS= read -r marketplace; do
-    [[ -z "$marketplace" ]] && continue
-    log_info "Registering marketplace: $marketplace"
-    claude plugin marketplace add "$marketplace" --scope user 2>/dev/null \
-      || log_warn "Could not register $marketplace — domain plugins may fail."
-  done <<< "$marketplaces"
+  if [[ -z "$entries" ]]; then return; fi
+  while IFS='|' read -r repo name; do
+    [[ -z "$repo" ]] && continue
+    log_info "Registering marketplace: $repo"
+    claude plugin marketplace add "$repo" --scope user 2>/dev/null || true
+    if [[ -n "$name" ]]; then
+      claude plugin marketplace update "$name" --scope user 2>/dev/null \
+        || log_warn "Could not update marketplace $name — domain plugins may fail."
+    fi
+  done <<< "$entries"
 }
 
 install_core_skills() {

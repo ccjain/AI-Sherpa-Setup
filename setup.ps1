@@ -93,10 +93,16 @@ function Register-Marketplaces {
     catch { return }
     $marketplaces = $config.marketplaces
     if (-not $marketplaces -or @($marketplaces).Count -eq 0) { return }
-    foreach ($marketplace in @($marketplaces)) {
-        Write-Info "Registering marketplace: $marketplace"
-        claude plugin marketplace add $marketplace --scope user 2>$null
-        if ($LASTEXITCODE -ne 0) { Write-Warn "Could not register $marketplace - domain plugins may fail." }
+    foreach ($entry in @($marketplaces)) {
+        $repo = if ($entry -is [string]) { $entry } else { $entry.repo }
+        $name = if ($entry -is [string]) { $null } else { $entry.name }
+        if (-not $repo) { continue }
+        Write-Info "Registering marketplace: $repo"
+        claude plugin marketplace add $repo --scope user 2>$null
+        if ($name) {
+            claude plugin marketplace update $name --scope user 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-Warn "Could not update marketplace $name - domain plugins may fail." }
+        }
     }
 }
 
