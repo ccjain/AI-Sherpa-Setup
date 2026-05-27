@@ -52,27 +52,60 @@ function Install-ClaudeCode {
     }
 }
 
+function Read-PluginConfig {
+    param([string]$Section)
+    $configFile = "$ScriptDir\plugins.json"
+    if (-not (Test-Path $configFile)) {
+        Write-Err "plugins.json not found at $configFile"
+        exit 1
+    }
+    try {
+        $config = Get-Content $configFile -Raw | ConvertFrom-Json
+    } catch {
+        Write-Err "Failed to parse plugins.json: $_"
+        exit 1
+    }
+    if ($Section -eq "global") {
+        return $config.global
+    }
+    if ($config.domains.PSObject.Properties[$Section]) {
+        return $config.domains.$Section
+    }
+    return @()
+}
+
+function Install-Plugin {
+    param($Entry)
+    if ($Entry.marketplace) {
+        claude plugin install "$($Entry.name)@$($Entry.marketplace)" --scope user
+        if ($LASTEXITCODE -ne 0) { Write-Warn "$($Entry.name) install may have failed - re-run setup to retry." }
+    } elseif ($Entry.github) {
+        claude plugin marketplace add "https://github.com/$($Entry.github)" --scope user 2>$null
+        claude plugin install $Entry.name --scope user
+        if ($LASTEXITCODE -ne 0) { Write-Warn "$($Entry.name) install may have failed - re-run setup to retry." }
+    }
+}
+
 function Install-CoreSkills {
     Write-Info "Installing core skills (this may take 1-2 minutes)..."
-    claude plugin install superpowers@claude-plugins-official --scope user
-    if ($LASTEXITCODE -ne 0) { Write-Warn "superpowers install may have failed. Check output above and re-run if needed." }
+    $plugins = Read-PluginConfig -Section "global"
+    if (-not $plugins -or @($plugins).Count -eq 0) {
+        Write-Warn "No global plugins defined in plugins.json"
+        return
+    }
+    foreach ($entry in $plugins) { Install-Plugin $entry }
     Write-Info "Core skills installed."
 }
 
 function Install-DomainSkills {
     param([string]$Domain)
-    switch ($Domain) {
-        "web" {
-            Write-Info "Installing web/frontend skills..."
-            claude plugin install vercel@claude-plugins-official --scope user
-            if ($LASTEXITCODE -ne 0) { Write-Warn "vercel plugin install may have failed." }
-            claude plugin install playwright@claude-plugins-official --scope user
-            if ($LASTEXITCODE -ne 0) { Write-Warn "playwright plugin install may have failed." }
-        }
-        default {
-            Write-Info "No additional skills for $Domain - core skills + CLAUDE.md rules apply."
-        }
+    $plugins = Read-PluginConfig -Section $Domain
+    if (-not $plugins -or @($plugins).Count -eq 0) {
+        Write-Info "No additional skills for $Domain - core skills + CLAUDE.md rules apply."
+        return
     }
+    Write-Info "Installing $Domain skills..."
+    foreach ($entry in $plugins) { Install-Plugin $entry }
 }
 
 function Write-GlobalSettings {
@@ -139,8 +172,11 @@ function Write-GlobalClaudeMd {
 
 function Invoke-Update {
     Write-Info "Updating AI Sherpa core skills..."
-    claude plugin update superpowers
-    if ($LASTEXITCODE -ne 0) { Write-Warn "superpowers update may have failed. Check output above and re-run if needed." }
+    $plugins = Read-PluginConfig -Section "global"
+    foreach ($entry in $plugins) {
+        claude plugin update $entry.name
+        if ($LASTEXITCODE -ne 0) { Write-Warn "$($entry.name) update may have failed - re-run --update to retry." }
+    }
     Write-GlobalSettings
     Write-Info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
