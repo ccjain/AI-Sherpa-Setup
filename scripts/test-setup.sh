@@ -93,6 +93,91 @@ assert_file_contains "CLAUDE.md has web rules" "$TMP/CLAUDE.md" "Web / Frontend"
 
 popd > /dev/null; rm -rf "$TMP"
 
+# --- Test install_core_skills reads global plugins from plugins.json ---
+echo "=== Test: install_core_skills reads global plugins from plugins.json ==="
+TMP=$(mktemp -d)
+MOCK_LOG="$TMP/claude_calls.log"
+cat > "$TMP/plugins.json" << 'EOF'
+{
+  "global": [
+    { "name": "superpowers", "marketplace": "claude-plugins-official" }
+  ],
+  "domains": { "web": [], "embedded": [], "backend": [], "data": [], "devops": [] }
+}
+EOF
+SCRIPT_DIR_BAK="$SCRIPT_DIR"; SCRIPT_DIR="$TMP"
+claude() { echo "claude $*" >> "$MOCK_LOG"; }
+export -f claude
+install_core_skills
+assert_file_contains "installs superpowers from config" "$MOCK_LOG" \
+  "plugin install superpowers@claude-plugins-official --scope user"
+SCRIPT_DIR="$SCRIPT_DIR_BAK"; unset -f claude; rm -rf "$TMP"
+
+# --- Test install_domain_skills reads domain plugins from plugins.json ---
+echo "=== Test: install_domain_skills reads domain plugins from plugins.json ==="
+TMP=$(mktemp -d)
+MOCK_LOG="$TMP/claude_calls.log"
+cat > "$TMP/plugins.json" << 'EOF'
+{
+  "global": [],
+  "domains": {
+    "web": [{ "name": "vercel", "marketplace": "claude-plugins-official" }],
+    "embedded": []
+  }
+}
+EOF
+SCRIPT_DIR_BAK="$SCRIPT_DIR"; SCRIPT_DIR="$TMP"
+claude() { echo "claude $*" >> "$MOCK_LOG"; }
+export -f claude
+install_domain_skills "web"
+assert_file_contains "installs vercel for web domain" "$MOCK_LOG" \
+  "plugin install vercel@claude-plugins-official --scope user"
+SCRIPT_DIR="$SCRIPT_DIR_BAK"; unset -f claude; rm -rf "$TMP"
+
+# --- Test install_domain_skills with empty domain ---
+echo "=== Test: install_domain_skills — no plugins for embedded ==="
+TMP=$(mktemp -d)
+MOCK_LOG="$TMP/claude_calls.log"
+cat > "$TMP/plugins.json" << 'EOF'
+{ "global": [], "domains": { "embedded": [] } }
+EOF
+SCRIPT_DIR_BAK="$SCRIPT_DIR"; SCRIPT_DIR="$TMP"
+claude() { echo "claude $*" >> "$MOCK_LOG"; }
+export -f claude
+install_domain_skills "embedded"
+assert_no_file "no claude calls for empty domain" "$MOCK_LOG"
+SCRIPT_DIR="$SCRIPT_DIR_BAK"; unset -f claude; rm -rf "$TMP"
+
+# --- Test install_domain_skills handles github entries ---
+echo "=== Test: install_domain_skills handles github entries ==="
+TMP=$(mktemp -d)
+MOCK_LOG="$TMP/claude_calls.log"
+cat > "$TMP/plugins.json" << 'EOF'
+{
+  "global": [],
+  "domains": {
+    "web": [{ "name": "graphify", "github": "safishamsi/graphify" }]
+  }
+}
+EOF
+SCRIPT_DIR_BAK="$SCRIPT_DIR"; SCRIPT_DIR="$TMP"
+claude() { echo "claude $*" >> "$MOCK_LOG"; }
+export -f claude
+install_domain_skills "web"
+assert_file_contains "adds github marketplace" "$MOCK_LOG" \
+  "plugin marketplace add https://github.com/safishamsi/graphify"
+assert_file_contains "installs github plugin" "$MOCK_LOG" \
+  "plugin install graphify"
+SCRIPT_DIR="$SCRIPT_DIR_BAK"; unset -f claude; rm -rf "$TMP"
+
+# --- Test missing plugins.json exits non-zero ---
+echo "=== Test: install_core_skills exits on missing plugins.json ==="
+TMP=$(mktemp -d)
+SCRIPT_DIR_BAK="$SCRIPT_DIR"; SCRIPT_DIR="$TMP"
+(SCRIPT_DIR="$TMP"; install_core_skills 2>/dev/null) && RC=0 || RC=$?
+assert_false "exits non-zero when plugins.json missing" "$RC"
+SCRIPT_DIR="$SCRIPT_DIR_BAK"; rm -rf "$TMP"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

@@ -48,27 +48,77 @@ copy_claude_md() {
   log_info "Domain CLAUDE.md installed at $target"
 }
 
+# Parse plugins.json for a given section ("global" or domain name).
+# Outputs pipe-delimited lines: type|name|source
+# Returns non-zero and prints error if plugins.json is missing or invalid.
+_read_plugins() {
+  local section="$1"
+  local config_file="$SCRIPT_DIR/plugins.json"
+  if [[ ! -f "$config_file" ]]; then
+    log_error "plugins.json not found at $config_file" >&2
+    return 1
+  fi
+  node -e "
+let raw = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', d => { raw += d; });
+process.stdin.on('end', () => {
+  let config;
+  try { config = JSON.parse(raw); }
+  catch (e) { process.stderr.write('Failed to parse plugins.json: ' + e.message + '\n'); process.exit(1); }
+  const section = '$section';
+  const plugins = section === 'global'
+    ? (config.global || [])
+    : ((config.domains && config.domains[section]) || []);
+  plugins.forEach(p => {
+    if (p.marketplace) process.stdout.write('marketplace|' + p.name + '|' + p.marketplace + '\n');
+    else if (p.github)  process.stdout.write('github|'      + p.name + '|' + p.github      + '\n');
+  });
+});
+" < "$config_file"
+}
+
+# Install one plugin entry (args: type name source)
+_install_plugin() {
+  local type="$1" name="$2" source="$3"
+  if [[ "$type" == "marketplace" ]]; then
+    claude plugin install "$name@$source" --scope user \
+      || log_warn "$name install may have failed — re-run setup to retry."
+  elif [[ "$type" == "github" ]]; then
+    claude plugin marketplace add "https://github.com/$source" --scope user 2>/dev/null || true
+    claude plugin install "$name" --scope user \
+      || log_warn "$name install may have failed — re-run setup to retry."
+  fi
+}
+
 install_core_skills() {
   log_info "Installing core skills (this may take 1-2 minutes)..."
-  claude plugin install superpowers@claude-plugins-official --scope user \
-    || log_warn "superpowers install may have failed. Check output above and re-run if needed."
+  local plugin_list
+  plugin_list=$(_read_plugins "global") || { log_error "Cannot read plugins.json — aborting."; exit 1; }
+  if [[ -z "$plugin_list" ]]; then
+    log_warn "No global plugins defined in plugins.json"
+    return
+  fi
+  while IFS='|' read -r type name source; do
+    [[ -z "$type" ]] && continue
+    _install_plugin "$type" "$name" "$source"
+  done <<< "$plugin_list"
   log_info "Core skills installed."
 }
 
 install_domain_skills() {
   local domain="$1"
-  case "$domain" in
-    web)
-      log_info "Installing web/frontend skills..."
-      claude plugin install vercel@claude-plugins-official --scope user \
-        || log_warn "vercel plugin install may have failed."
-      claude plugin install playwright@claude-plugins-official --scope user \
-        || log_warn "playwright plugin install may have failed."
-      ;;
-    embedded|backend|data|devops)
-      log_info "No additional skills for $domain — core skills + CLAUDE.md rules apply."
-      ;;
-  esac
+  local plugin_list
+  plugin_list=$(_read_plugins "$domain") || { log_error "Cannot read plugins.json — aborting."; exit 1; }
+  if [[ -z "$plugin_list" ]]; then
+    log_info "No additional skills for $domain — core skills + CLAUDE.md rules apply."
+    return
+  fi
+  log_info "Installing $domain skills..."
+  while IFS='|' read -r type name source; do
+    [[ -z "$type" ]] && continue
+    _install_plugin "$type" "$name" "$source"
+  done <<< "$plugin_list"
 }
 
 print_summary() {
