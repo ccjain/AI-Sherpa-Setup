@@ -315,13 +315,83 @@ session data from each dev's laptop to the on-prem server. The mechanism is
 the same for Phase 1.5 (metadata only) and Phase 2 (full transcripts) — only
 the payload shape differs.
 
-### 11.1 Topology
+### 11.1 Architecture at a glance
+
+End-to-end, from a developer's keystrokes inside Claude Code to a GitHub
+Issue filed for the central team to triage:
+
+```
+  ON DEV LAPTOPS (Windows × ~150)                  ON-PREM WINDOWS SERVER (always on)
+
+  ┌─ Claude Code session ─────────┐                ┌─ FastAPI ingest service ──────┐
+  │ writes JSONL transcript to    │                │ NSSM-managed Windows service  │
+  │ %USERPROFILE%\.claude\        │                │ binds 0.0.0.0:8080 on LAN     │
+  │  projects\<hash>\<id>.jsonl   │                │                               │
+  └───────────────┬───────────────┘                │ POST /v1/sessions/{id}        │
+                  │                                │   headers: X-Machine-Id,      │
+                  ▼                                │            X-Developer        │
+  ┌─ SessionEnd hook (95% case) ──┐  HTTP POST     │   body:    JSONL              │
+  │ runs upload.ps1 -Mode Hook    ├────────────────▶ → SHA-256 dedup check         │
+  └───────────────┬───────────────┘  (intranet     │ → write to D:\ai-sherpa\…     │
+                  │                  only)         │ → log to ingest.log           │
+                  │ + hourly Task Scheduler sweep                                  │
+                  │   (5% case: hook missed,       └──────────────┬────────────────┘
+                  │    laptop was offline, etc.)                  │
+                  ▼                                                ▼
+  ┌─ upload.ps1 ──────────────────┐               ┌─ Storage on the server ───────┐
+  │ 1. NDA gate (skip if          │               │ D:\ai-sherpa\                 │
+  │    NDA.md / CONFIDENTIAL.md)  │               │  ├─ sessions\<dev>\<machine>\ │
+  │ 2. dedup vs local uploads.db  │               │  │   └─ <session>.jsonl       │
+  │ 3. transform payload          │               │  ├─ events.sqlite             │
+  │    (1.5 = metadata only,      │               │  ├─ insights.sqlite           │
+  │     2  = full JSONL)          │               │  └─ logs\ingest.log           │
+  │ 4. POST to server             │               └──────────────┬────────────────┘
+  │ 5. mark uploaded / pending    │                              │ nightly Windows
+  │    in uploads.db              │                              │ scheduled task
+  └───────────────────────────────┘                              ▼
+                                                  ┌─ Analyzer (Python, same box) ─┐
+  (repeat × 150 laptops)                          │ - parse JSONL → events        │
+                                                  │ - run §3 scenario detections  │
+                                                  │   (SQL + local embeddings,    │
+                                                  │    no LLM in v1)              │
+                                                  │ - render candidate-change     │
+                                                  │   Issue body per template     │
+                                                  └──────────────┬────────────────┘
+                                                                 │
+                                                                 ▼ gh issue create
+                                                  ┌─ GitHub (AI Sherpa repo) ─────┐
+                                                  │ Issues filed into the same    │
+                                                  │ triage queue as manual        │
+                                                  │ feedback from Phase 1.        │
+                                                  │ Labels: feedback,             │
+                                                  │   source:telemetry,           │
+                                                  │   type/<bucket>, domain/<X>,  │
+                                                  │   severity/*, confidence/*    │
+                                                  └───────────────────────────────┘
+```
+
+**Five hops, each well-defined:**
+
+1. **Claude Code writes JSONL.** Already happens; no change needed. One file per session at `%USERPROFILE%\.claude\projects\<hash>\<session>.jsonl`.
+2. **Laptop pushes via HTTP.** `SessionEnd` hook runs `upload.ps1 -Mode Hook` immediately; an hourly Task Scheduler entry runs `-Mode Sweep` as catch-up. Both POST to the ingest service. Failures queue locally in `uploads.db` and retry with backoff (see §11.8).
+3. **Ingest writes to disk.** FastAPI service receives the POST, dedups against SQLite, writes the JSONL to `D:\ai-sherpa\sessions\<dev>\<machine_id>\<session_id>.jsonl`. Logs every request for forensic review.
+4. **Analyzer runs nightly.** Same on-prem box. Parses new JSONL into events, runs the §3 detection queries (tabular rules + local embeddings/clustering), generates candidate-change Issue bodies per the templates in §12.3.
+5. **Issues filed via `gh` CLI.** Each detected pattern becomes a GitHub Issue with the right labels — joining the Phase 1 triage queue. From there it's the same flow as manual feedback: triage → PR → weekly release → email (see Phase 1 spec).
+
+**Two boundaries that matter:**
+
+- The **HTTP boundary** (between hop 2 and hop 3) is the only network call in the whole pipeline. Everything else is local: file reads on the laptop, file writes + SQLite + Python on the server. Easy to debug; failure mode is bounded.
+- The **`gh issue create` boundary** (between hop 4 and hop 5) is the **convergence point with Phase 1** — manual feedback Issues and telemetry-derived Issues land in the same queue, distinguished only by `source:*` labels. The central team's weekly workflow doesn't care which source produced an Issue.
+
+The remaining §11.x subsections drill into each hop.
+
+### 11.2 Topology
 
 - **Single on-prem standalone Windows server** (already exists, always on, has space + CPU). Not AD-joined.
 - **Intranet only** — server reachable on the corporate LAN; not exposed to the public internet.
 - **Dev laptops are Windows-primary**. Linux/Mac collectors are supported (same logic, bash instead of PowerShell) but not the primary target for v1.
 
-### 11.2 Where sessions live on Windows
+### 11.3 Where sessions live on Windows
 
 Claude Code already writes every session to disk:
 
@@ -332,7 +402,7 @@ tool result). Files are appended during the conversation and finalized at
 session end. The collector reads these files; it doesn't need to hook into
 Claude Code internals.
 
-### 11.3 Collection mechanism: hook + sweep
+### 11.4 Collection mechanism: hook + sweep
 
 Two complementary triggers, both running the same upload script:
 
@@ -343,7 +413,7 @@ Two complementary triggers, both running the same upload script:
 
 Both invocations run the same PowerShell script (`upload.ps1`) with different `-Mode` arguments (`Hook` or `Sweep`).
 
-### 11.4 Server-side service
+### 11.5 Server-side service
 
 A tiny FastAPI service running as a Windows service (installed via NSSM)
 on the on-prem server.
@@ -361,7 +431,7 @@ on the on-prem server.
 
 **Size:** Roughly 40 lines of Python. Single file. No DB migrations beyond a tiny SQLite schema.
 
-### 11.5 Client-side: what `setup.bat --enable-telemetry` installs
+### 11.6 Client-side: what `setup.bat --enable-telemetry` installs
 
 Files created on the laptop:
 
@@ -383,7 +453,7 @@ Windows Task Scheduler
         → trigger: hourly, only when network available, run as logged-in user
 ```
 
-### 11.6 Upload script logic (same for both modes)
+### 11.7 Upload script logic (same for both modes)
 
 ```
 1. For each candidate JSONL file in %USERPROFILE%\.claude\projects\**:
@@ -401,7 +471,7 @@ Windows Task Scheduler
 
 The script is fully stateless between invocations — the SQLite manifest is the only persisted state.
 
-### 11.7 Offline tolerance
+### 11.8 Offline tolerance
 
 A laptop off the corporate LAN behaves like this:
 
@@ -413,7 +483,7 @@ What's lost in v1: a laptop that **never** reconnects to the LAN (lost, sold,
 fully-remote dev who never visits an office). Acceptable; tracked as a v2
 concern.
 
-### 11.8 NDA / privacy gate
+### 11.9 NDA / privacy gate
 
 Before uploading any session, the script checks:
 
@@ -422,13 +492,13 @@ Before uploading any session, the script checks:
 
 A persistent project-level marker file (`.ai-sherpa-noupload`) can be dropped into a project root to permanently exclude it from telemetry regardless of NDA file presence.
 
-### 11.9 Bandwidth and storage sanity check
+### 11.10 Bandwidth and storage sanity check
 
 - **Per laptop per day:** ~10 sessions × ~200 KB average = ~2 MB/day.
 - **Total ingest:** 150 laptops × 2 MB = ~300 MB/day.
 - **Server storage:** at 300 MB/day, a 1 TB volume holds ~9 years of raw sessions. No archival pressure for v1.
 
-### 11.10 Migration path to v2 (off-network laptops)
+### 11.11 Migration path to v2 (off-network laptops)
 
 When the time comes to support fully-remote devs whose laptops never reach the corp LAN:
 
