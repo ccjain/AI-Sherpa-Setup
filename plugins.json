@@ -18,8 +18,10 @@
       { "name": "frontend-design", "marketplace": "claude-plugins-official" },
       { "name": "vercel",          "marketplace": "claude-plugins-official" }
     ],
-    "data":   [],
-    "devops": [],
+    "data":     [],
+    "devops":   [],
+    "ai":       [],
+    "frontend": [],
     "marketing":   [{ "name": "marketing",        "marketplace": "knowledge-work-plugins" }],
     "sales":       [{ "name": "sales",            "marketplace": "knowledge-work-plugins" }],
     "finance": [
@@ -41,6 +43,8 @@
     "web": [
       { "repo": "addyosmani/web-quality-skills", "subpath": "skills" },
       { "repo": "bitjaru/styleseed",             "subpath": "engine/.claude/skills" }
-    ]
+    ],
+    "ai":       [],
+    "frontend": []
   }
 }
