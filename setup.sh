@@ -469,20 +469,36 @@ install_pypi_tool_windows_side() {
     return 1
   fi
 
-  # If a post-install command is given, locate the installed .exe in Python's
-  # Scripts directory and run it through powershell.exe. Without this lookup
-  # the .exe usually isn't on Windows PATH.
-  if [[ -n "$post_install" ]]; then
-    local py_cmd="py"
-    case "$pip_cmd" in
-      "py -m pip")     py_cmd="py" ;;
-      "python -m pip") py_cmd="python" ;;
-      "pip")           py_cmd="python" ;;
-    esac
+  # Resolve Python's Scripts dirs once — needed for both the post-install
+  # lookup AND for adding the dir(s) to Windows User PATH so future shells
+  # (especially Claude SessionStart hooks) can find the installed exe.
+  local py_cmd="py"
+  case "$pip_cmd" in
+    "py -m pip")     py_cmd="py" ;;
+    "python -m pip") py_cmd="python" ;;
+    "pip")           py_cmd="python" ;;
+  esac
 
-    local sys_scripts user_scripts tool_exe=""
-    sys_scripts=$(powershell.exe -NoProfile -Command "$py_cmd -c \"import sysconfig; print(sysconfig.get_path('scripts'))\"" 2>/dev/null | tr -d '\r\n')
-    user_scripts=$(powershell.exe -NoProfile -Command "$py_cmd -c \"import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))\"" 2>/dev/null | tr -d '\r\n')
+  local sys_scripts user_scripts
+  sys_scripts=$(powershell.exe -NoProfile -Command "$py_cmd -c \"import sysconfig; print(sysconfig.get_path('scripts'))\"" 2>/dev/null | tr -d '\r\n')
+  user_scripts=$(powershell.exe -NoProfile -Command "$py_cmd -c \"import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))\"" 2>/dev/null | tr -d '\r\n')
+
+  # Persist Scripts dirs to Windows User PATH (winget Python doesn't add them
+  # automatically — this is why crg-daemon isn't reachable from a fresh shell
+  # after install).
+  local s
+  for s in "$sys_scripts" "$user_scripts"; do
+    [[ -z "$s" ]] && continue
+    local already
+    already=$(powershell.exe -NoProfile -Command "([Environment]::GetEnvironmentVariable('PATH','User') -split ';') -contains '$s'" 2>/dev/null | tr -d '\r\n')
+    if [[ "$already" != "True" ]]; then
+      log_info "Adding '$s' to Windows User PATH..."
+      powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('PATH', ([Environment]::GetEnvironmentVariable('PATH','User').TrimEnd(';') + ';$s'), 'User')" 2>/dev/null || true
+    fi
+  done
+
+  if [[ -n "$post_install" ]]; then
+    local tool_exe=""
 
     if [[ -n "$sys_scripts" ]] && \
        powershell.exe -NoProfile -Command "Test-Path -LiteralPath '$sys_scripts\\$exe_name'" 2>/dev/null | grep -qi true; then

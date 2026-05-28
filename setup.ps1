@@ -360,6 +360,30 @@ function Install-PyPiTool {
                         -ManualInstall "$pipCmd install $Package$(if ($PostInstall) { '; ' + $PostInstall })"
         return
     }
+
+    # Persist Python's Scripts dirs to Windows User PATH if missing, so future
+    # shells / Claude SessionStart hooks can find the installed exe (winget
+    # Python installs don't add these dirs to PATH by default, and pip warns
+    # about it loudly).
+    try {
+        $pyExe = if ($pipCmd -eq 'pip3') { 'python3' } else { 'python' }
+        $sysScripts  = & $pyExe -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>$null
+        $userScripts = & $pyExe -c "import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))" 2>$null
+        $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+        $pathParts = if ($userPath) { $userPath -split ';' } else { @() }
+        foreach ($s in @($sysScripts, $userScripts)) {
+            if ($s -and (Test-Path $s) -and (-not ($pathParts -contains $s))) {
+                Write-Info "Adding '$s' to Windows User PATH..."
+                $userPath = ($userPath -replace ';+$','') + ';' + $s
+                [Environment]::SetEnvironmentVariable('PATH', $userPath, 'User')
+                $env:Path = $env:Path + ';' + $s
+                $pathParts += $s
+            }
+        }
+    } catch {
+        # Best-effort only; don't fail setup on PATH-fix issues
+    }
+
     if ($PostInstall) {
         Invoke-Expression $PostInstall
         if ($LASTEXITCODE -ne 0) {
