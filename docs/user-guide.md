@@ -421,6 +421,47 @@ Updates core plugins and secrets settings. Your project's `CLAUDE.md` is **never
 
 ---
 
+## 11b. Uninstalling — start fresh
+
+If something gets into a bad state, or you just want to wipe everything setup
+wrote and start over:
+
+```powershell
+C:\tools\ai-sherpa\setup.bat --uninstall       # Windows
+bash ~/tools/ai-sherpa/setup.sh --uninstall     # Linux/macOS/WSL
+```
+
+You'll be shown what's about to be removed and asked to type **`uninstall`**
+to confirm (anything else aborts).
+
+### What gets removed
+
+- Every Claude plugin in `plugins.json` `global[]` + every `domains.*[]`
+- Every raw skill directory cloned from `plugins.json` `skills.*` repos
+- Every CLI tool from `plugins.json` `tools.*` — `pip uninstall`,
+  `cargo uninstall`, or `rm -rf` on git-clone destinations
+- Every marketplace registered (`claude plugin marketplace remove`)
+- `~/.claude/settings.json` and `~/.claude/CLAUDE.md` — restored from
+  `.bak` if those exist (i.e. you ran setup over a pre-existing config),
+  otherwise deleted
+
+### What stays — by design
+
+- **Toolchains:** Node.js / Python / Rust / Git stay installed. They're useful
+  to many tools beyond AI Sherpa, and removing them risks breaking unrelated
+  work. If you actually want them gone, do it manually via your package
+  manager.
+- **Your projects:** Untouched. The uninstall never reads or writes outside
+  `~/.claude/`.
+- **`~/.claude/projects/...` session logs:** Conversation history stays —
+  it's user data, not AI Sherpa's to delete.
+- **Manually-installed plugins / skills:** Anything you installed outside of
+  `plugins.json` is preserved. Uninstall only removes what setup wrote.
+
+After uninstall, re-run `setup.bat` / `bash setup.sh` to start fresh.
+
+---
+
 ## 12. Using The Same Setup From Both Windows and WSL
 
 You already can, with no extra work — see Section 4 (WSL + Windows Hybrid). The Windows `claude`

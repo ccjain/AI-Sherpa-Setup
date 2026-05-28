@@ -1,6 +1,7 @@
 #Requires -Version 5.1
 param(
-    [switch]$Update
+    [switch]$Update,
+    [switch]$Uninstall
 )
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -517,6 +518,159 @@ function Invoke-Update {
     Write-Info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
 
+function Invoke-Uninstall {
+    Write-Host ""
+    Write-Host "======================================================" -ForegroundColor Yellow
+    Write-Host "  AI Sherpa -- UNINSTALL" -ForegroundColor Yellow
+    Write-Host "======================================================" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "This will remove from $env:USERPROFILE\.claude\:"
+    Write-Host "  - All Claude plugins listed in plugins.json (global + every domain)"
+    Write-Host "  - All raw skills cloned from plugins.json skills.* repos"
+    Write-Host "  - All CLI tools listed in plugins.json tools.* (rtk, claude-usage, code-review-graph, ...)"
+    Write-Host "  - The marketplaces registered by setup"
+    Write-Host "  - settings.json and CLAUDE.md (restored from .bak if present, else deleted)"
+    Write-Host ""
+    Write-Host "  NOT touched: Node.js / Python / Rust / Git toolchains, your projects,"
+    Write-Host "  manually-installed plugins, ~/.claude/projects/ session logs."
+    Write-Host ""
+    $confirm = Read-Host "Type 'uninstall' to confirm"
+    if ($confirm -ne 'uninstall') {
+        Write-Info "Aborted (confirmation not received)."
+        return
+    }
+
+    $configFile = "$ScriptDir\plugins.json"
+    $config = $null
+    if (Test-Path $configFile) {
+        try { $config = Get-Content $configFile -Raw | ConvertFrom-Json } catch { Write-Warn "Could not parse plugins.json: $_" }
+    }
+
+    # 1. Uninstall Claude plugins (global + every domain)
+    Write-Info "Removing Claude plugins..."
+    if ($config) {
+        $pluginEntries = @()
+        if ($config.global) { $pluginEntries += @($config.global) }
+        if ($config.domains) {
+            foreach ($d in $config.domains.PSObject.Properties.Name) {
+                if ($config.domains.$d) { $pluginEntries += @($config.domains.$d) }
+            }
+        }
+        foreach ($p in $pluginEntries) {
+            if ($p.marketplace) {
+                Write-Info "  - $($p.name)@$($p.marketplace)"
+                claude plugin uninstall "$($p.name)@$($p.marketplace)" --scope user 2>$null
+            }
+        }
+    }
+
+    # 2. Uninstall CLI tools (PyPI / cargo / git-clone)
+    Write-Info "Removing CLI tools..."
+    if ($config -and $config.tools) {
+        $toolEntries = @()
+        if ($config.tools.global) { $toolEntries += @($config.tools.global) }
+        foreach ($d in $config.tools.PSObject.Properties.Name) {
+            if ($d -eq 'global') { continue }
+            if ($config.tools.$d) { $toolEntries += @($config.tools.$d) }
+        }
+        foreach ($t in $toolEntries) {
+            switch ($t.source) {
+                'pypi' {
+                    Write-Info "  - $($t.name) (pip uninstall)"
+                    $pipCmd = Resolve-PipCommand
+                    if ($pipCmd -and $t.package) { & $pipCmd uninstall -y $t.package 2>$null }
+                }
+                'cargo' {
+                    $pkg = if ($t.package) { $t.package } else { $t.name }
+                    Write-Info "  - $($t.name) (cargo uninstall $pkg)"
+                    if (Test-CommandExists "cargo") { & cargo uninstall $pkg 2>$null }
+                }
+                'git-clone' {
+                    if ($t.destination) {
+                        $dest = $t.destination -replace '^~', $env:USERPROFILE
+                        if (Test-Path $dest) {
+                            Write-Info "  - $($t.name) (rm $dest)"
+                            Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    # 3. Remove raw skills - clone each source to figure out which skill folders we added
+    Write-Info "Removing raw skills from ~/.claude/skills/..."
+    if ($config -and $config.skills) {
+        $skillsDir = "$env:USERPROFILE\.claude\skills"
+        $skillEntries = @()
+        if ($config.skills.global) { $skillEntries += @($config.skills.global) }
+        foreach ($d in $config.skills.PSObject.Properties.Name) {
+            if ($d -eq 'global') { continue }
+            if ($config.skills.$d) { $skillEntries += @($config.skills.$d) }
+        }
+        foreach ($entry in $skillEntries) {
+            $repo = $entry.repo
+            $subpath = if ($entry.subpath) { $entry.subpath } else { "skills" }
+            if (-not $repo) { continue }
+            $tmp = Join-Path $env:TEMP "ai-sherpa-uninstall-$($repo -replace '/', '-')"
+            if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+            & git clone --depth 1 --quiet "https://github.com/$repo" $tmp
+            if ($LASTEXITCODE -eq 0) {
+                $src = Join-Path $tmp $subpath
+                if (Test-Path $src) {
+                    foreach ($n in (Get-ChildItem $src -Directory | Select-Object -ExpandProperty Name)) {
+                        $target = Join-Path $skillsDir $n
+                        if (Test-Path $target) {
+                            Write-Info "  - $n"
+                            Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
+            }
+            if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+        }
+    }
+
+    # 4. Restore (or remove) settings.json and CLAUDE.md
+    Write-Info "Restoring settings + rules..."
+    $settingsFile = "$env:USERPROFILE\.claude\settings.json"
+    $claudeMd     = "$env:USERPROFILE\.claude\CLAUDE.md"
+    if (Test-Path "$settingsFile.bak") {
+        Move-Item "$settingsFile.bak" $settingsFile -Force
+        Write-Info "  Restored $settingsFile from .bak"
+    } elseif (Test-Path $settingsFile) {
+        Remove-Item $settingsFile -Force
+        Write-Info "  Removed $settingsFile (no .bak)"
+    }
+    if (Test-Path "$claudeMd.bak") {
+        Move-Item "$claudeMd.bak" $claudeMd -Force
+        Write-Info "  Restored $claudeMd from .bak"
+    } elseif (Test-Path $claudeMd) {
+        Remove-Item $claudeMd -Force
+        Write-Info "  Removed $claudeMd (no .bak)"
+    }
+
+    # 5. Remove marketplaces
+    Write-Info "Removing registered marketplaces..."
+    if ($config -and $config.marketplaces) {
+        foreach ($m in $config.marketplaces) {
+            if ($m.name) {
+                Write-Info "  - $($m.name)"
+                claude plugin marketplace remove $m.name 2>$null
+            }
+        }
+    }
+
+    Write-Host ""
+    Write-Host "======================================================" -ForegroundColor Green
+    Write-Host "  AI Sherpa Uninstall Complete" -ForegroundColor Green
+    Write-Host "======================================================" -ForegroundColor Green
+    Write-Host "  Toolchains (Node / Python / Rust / Git) were NOT removed."
+    Write-Host "  Re-run setup.bat to start fresh."
+    Write-Host "======================================================" -ForegroundColor Green
+    Write-Host ""
+}
+
 function Print-Summary {
     param([string]$Domain, [switch]$UserLevel)
     Write-Host ""
@@ -550,6 +704,11 @@ Write-Host ""
 
 if ($Update) {
     Invoke-Update
+    exit 0
+}
+
+if ($Uninstall) {
+    Invoke-Uninstall
     exit 0
 }
 

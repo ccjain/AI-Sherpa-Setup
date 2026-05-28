@@ -753,13 +753,164 @@ run_update() {
   log_info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
 
+run_uninstall() {
+  echo ""
+  echo -e "${YELLOW}======================================================${NC}"
+  echo -e "${YELLOW}  AI Sherpa -- UNINSTALL${NC}"
+  echo -e "${YELLOW}======================================================${NC}"
+  echo ""
+  echo "This will remove from $EFFECTIVE_HOME/.claude/:"
+  echo "  - All Claude plugins listed in plugins.json (global + every domain)"
+  echo "  - All raw skills cloned from plugins.json skills.* repos"
+  echo "  - All CLI tools listed in plugins.json tools.*"
+  echo "  - The marketplaces registered by setup"
+  echo "  - settings.json and CLAUDE.md (restored from .bak if present, else deleted)"
+  echo ""
+  echo "  NOT touched: Node.js / Python / Rust / Git toolchains, your projects,"
+  echo "  manually-installed plugins, ~/.claude/projects/ session logs."
+  echo ""
+  read -rp "Type 'uninstall' to confirm: " confirm
+  if [[ "$confirm" != "uninstall" ]]; then
+    log_info "Aborted (confirmation not received)."
+    return
+  fi
+
+  local config_file="$SCRIPT_DIR/plugins.json"
+  [[ ! -f "$config_file" ]] && { log_warn "plugins.json not found, nothing to uninstall."; return; }
+
+  # 1. Uninstall Claude plugins
+  log_info "Removing Claude plugins..."
+  node -e "
+const fs=require('fs');
+try{
+  const c=JSON.parse(fs.readFileSync('$config_file','utf8'));
+  const all=[].concat(c.global||[]);
+  if(c.domains){for(const d of Object.keys(c.domains)){all.push(...(c.domains[d]||[]))}}
+  all.forEach(p=>{if(p.marketplace)process.stdout.write(p.name+'@'+p.marketplace+'\n')});
+}catch(e){}" | while read -r entry; do
+    [[ -z "$entry" ]] && continue
+    log_info "  - $entry"
+    claude plugin uninstall "$entry" --scope user 2>/dev/null || true
+  done
+
+  # 2. Uninstall CLI tools
+  log_info "Removing CLI tools..."
+  node -e "
+const fs=require('fs');
+try{
+  const c=JSON.parse(fs.readFileSync('$config_file','utf8'));
+  const t=c.tools||{};
+  const all=[].concat(t.global||[]);
+  for(const d of Object.keys(t)){if(d==='global')continue;all.push(...(t[d]||[]))}
+  all.forEach(x=>process.stdout.write([x.source||'',x.name||'',x.package||'',x.destination||''].join('\t')+'\n'));
+}catch(e){}" | while IFS=$'\t' read -r source name package destination; do
+    [[ -z "$source" ]] && continue
+    case "$source" in
+      pypi)
+        log_info "  - $name (pip uninstall)"
+        local pip_cmd
+        pip_cmd=$(resolve_pip_command)
+        if [[ -n "$pip_cmd" && -n "$package" ]]; then
+          if check_command pipx; then pipx uninstall "$package" 2>/dev/null || true; fi
+          "$pip_cmd" uninstall -y "$package" 2>/dev/null || true
+        fi
+        ;;
+      cargo)
+        local pkg="${package:-$name}"
+        log_info "  - $name (cargo uninstall $pkg)"
+        check_command cargo && cargo uninstall "$pkg" 2>/dev/null || true
+        ;;
+      git-clone)
+        local dest="${destination/#\~/$HOME}"
+        if [[ -n "$dest" && -d "$dest" ]]; then
+          log_info "  - $name (rm $dest)"
+          rm -rf "$dest"
+        fi
+        ;;
+    esac
+  done
+
+  # 3. Remove raw skills
+  log_info "Removing raw skills from $EFFECTIVE_HOME/.claude/skills/..."
+  local skills_dir="$EFFECTIVE_HOME/.claude/skills"
+  node -e "
+const fs=require('fs');
+try{
+  const c=JSON.parse(fs.readFileSync('$config_file','utf8'));
+  const s=c.skills||{};
+  const all=[].concat(s.global||[]);
+  for(const d of Object.keys(s)){if(d==='global')continue;all.push(...(s[d]||[]))}
+  all.forEach(x=>process.stdout.write([x.repo||'',x.subpath||'skills'].join('\t')+'\n'));
+}catch(e){}" | while IFS=$'\t' read -r repo subpath; do
+    [[ -z "$repo" ]] && continue
+    local slug; slug=$(echo "$repo" | tr '/' '-')
+    local tmp; tmp=$(mktemp -d -t "ai-sherpa-uninst-${slug}.XXXXXX")
+    if git clone --depth 1 --quiet "https://github.com/$repo" "$tmp" 2>/dev/null; then
+      if [[ -d "$tmp/$subpath" ]]; then
+        for entry in "$tmp/$subpath"/*/; do
+          local n
+          n=$(basename "$entry")
+          if [[ -d "$skills_dir/$n" ]]; then
+            log_info "  - $n"
+            rm -rf "$skills_dir/$n"
+          fi
+        done
+      fi
+    fi
+    rm -rf "$tmp"
+  done
+
+  # 4. Restore settings.json + CLAUDE.md from .bak (or delete)
+  log_info "Restoring settings + rules..."
+  local settings_file="$EFFECTIVE_HOME/.claude/settings.json"
+  local claude_md="$EFFECTIVE_HOME/.claude/CLAUDE.md"
+  if [[ -f "${settings_file}.bak" ]]; then
+    mv "${settings_file}.bak" "$settings_file"
+    log_info "  Restored $settings_file from .bak"
+  elif [[ -f "$settings_file" ]]; then
+    rm -f "$settings_file"
+    log_info "  Removed $settings_file (no .bak)"
+  fi
+  if [[ -f "${claude_md}.bak" ]]; then
+    mv "${claude_md}.bak" "$claude_md"
+    log_info "  Restored $claude_md from .bak"
+  elif [[ -f "$claude_md" ]]; then
+    rm -f "$claude_md"
+    log_info "  Removed $claude_md (no .bak)"
+  fi
+
+  # 5. Remove marketplaces
+  log_info "Removing registered marketplaces..."
+  node -e "
+const fs=require('fs');
+try{
+  const c=JSON.parse(fs.readFileSync('$config_file','utf8'));
+  (c.marketplaces||[]).forEach(m=>{if(m.name)process.stdout.write(m.name+'\n')});
+}catch(e){}" | while read -r mp; do
+    [[ -z "$mp" ]] && continue
+    log_info "  - $mp"
+    claude plugin marketplace remove "$mp" 2>/dev/null || true
+  done
+
+  echo ""
+  echo -e "${GREEN}======================================================${NC}"
+  echo -e "${GREEN}  AI Sherpa Uninstall Complete${NC}"
+  echo -e "${GREEN}======================================================${NC}"
+  echo "  Toolchains (Node / Python / Rust / Git) were NOT removed."
+  echo "  Re-run bash setup.sh to start fresh."
+  echo -e "${GREEN}======================================================${NC}"
+  echo ""
+}
+
 main() {
   local UPDATE_MODE=false
+  local UNINSTALL_MODE=false
 
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --update) UPDATE_MODE=true; shift ;;
-      *) log_error "Unknown argument: $1  (valid: --update)"; exit 1 ;;
+      --update)    UPDATE_MODE=true; shift ;;
+      --uninstall) UNINSTALL_MODE=true; shift ;;
+      *) log_error "Unknown argument: $1  (valid: --update, --uninstall)"; exit 1 ;;
     esac
   done
 
@@ -785,6 +936,11 @@ main() {
 
   if [[ "$UPDATE_MODE" == true ]]; then
     run_update
+    exit 0
+  fi
+
+  if [[ "$UNINSTALL_MODE" == true ]]; then
+    run_uninstall
     exit 0
   fi
 

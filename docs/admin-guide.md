@@ -421,6 +421,30 @@ No setup script changes needed. Re-run setup (or `--update`) on each machine.
 - Not a substitute for raw skills. Skills with `SKILL.md` frontmatter that
   Claude can auto-activate go under `skills.<domain>[]`.
 
+### Uninstalling everything that setup writes
+
+For a clean reset (e.g. before re-running setup), use the `--uninstall` flag
+on either script:
+
+```bash
+bash setup.sh --uninstall              # Linux / macOS / WSL
+setup.bat --uninstall                  # Windows
+```
+
+The uninstaller walks every section of `plugins.json` and reverses the
+corresponding install: plugins via `claude plugin uninstall`, raw skills by
+removing the cloned dirs from `~/.claude/skills/`, tools by source-specific
+removal (`pip uninstall`, `cargo uninstall`, `rm -rf <destination>`), and
+finally `claude plugin marketplace remove` for every registered marketplace.
+`~/.claude/settings.json` and `~/.claude/CLAUDE.md` are restored from the
+`.bak` files setup wrote when it installed (or deleted if no `.bak` exists).
+
+Toolchains (Node / Python / Rust / Git) are **never** removed, even if setup
+installed them — they're broadly useful and the user can remove them
+manually if they want.
+
+Requires typed `uninstall` confirmation before any destructive action.
+
 ### When a tool's upstream publishes a real Claude marketplace
 
 Migrate it out of `tools[]` into `marketplaces[]` + the appropriate domain.
