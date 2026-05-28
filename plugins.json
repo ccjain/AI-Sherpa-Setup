@@ -1,96 +1,43 @@
 {
   "marketplaces": [
-    { "repo": "anthropics/knowledge-work-plugins", "name": "knowledge-work-plugins"          },
-    { "repo": "anthropics/financial-services",     "name": "claude-for-financial-services"   },
-    { "repo": "jeffallan/claude-skills",           "name": "fullstack-dev-skills"            }
+    { "repo": "anthropics/knowledge-work-plugins",  "name": "knowledge-work-plugins"        },
+    { "repo": "anthropics/financial-services",      "name": "claude-for-financial-services" },
+    { "repo": "jeffallan/claude-skills",            "name": "fullstack-dev-skills"          },
+    { "repo": "sickn33/antigravity-awesome-skills", "name": "antigravity-awesome-skills"    }
   ],
   "global": [
-    { "name": "superpowers",          "marketplace": "claude-plugins-official"  },
-    { "name": "code-reviewer",        "marketplace": "fullstack-dev-skills"     },
-    { "name": "debugging-wizard",     "marketplace": "fullstack-dev-skills"     },
-    { "name": "test-master",          "marketplace": "fullstack-dev-skills"     },
-    { "name": "secure-code-guardian", "marketplace": "fullstack-dev-skills"     },
-    { "name": "security-reviewer",    "marketplace": "fullstack-dev-skills"     },
-    { "name": "architecture-designer","marketplace": "fullstack-dev-skills"     },
-    { "name": "legacy-modernizer",    "marketplace": "fullstack-dev-skills"     },
-    { "name": "feature-forge",        "marketplace": "fullstack-dev-skills"     }
+    { "name": "superpowers",          "marketplace": "claude-plugins-official" },
+    { "name": "fullstack-dev-skills", "marketplace": "fullstack-dev-skills"    }
   ],
   "domains": {
     "embedded": [
-      { "name": "embedded-systems", "marketplace": "fullstack-dev-skills" },
-      { "name": "cpp-pro",          "marketplace": "fullstack-dev-skills" },
-      { "name": "rust-engineer",    "marketplace": "fullstack-dev-skills" }
+      { "name": "antigravity-bundle-systems-programming", "marketplace": "antigravity-awesome-skills" }
     ],
     "web": [
-      { "name": "vercel",              "marketplace": "claude-plugins-official" },
-      { "name": "playwright",          "marketplace": "claude-plugins-official" },
-      { "name": "react-expert",        "marketplace": "fullstack-dev-skills"    },
-      { "name": "nextjs-developer",    "marketplace": "fullstack-dev-skills"    },
-      { "name": "vue-expert",          "marketplace": "fullstack-dev-skills"    },
-      { "name": "angular-architect",   "marketplace": "fullstack-dev-skills"    },
-      { "name": "typescript-pro",      "marketplace": "fullstack-dev-skills"    },
-      { "name": "javascript-pro",      "marketplace": "fullstack-dev-skills"    },
-      { "name": "react-native-expert", "marketplace": "fullstack-dev-skills"    },
-      { "name": "flutter-expert",      "marketplace": "fullstack-dev-skills"    },
-      { "name": "wordpress-pro",       "marketplace": "fullstack-dev-skills"    },
-      { "name": "shopify-expert",      "marketplace": "fullstack-dev-skills"    }
+      { "name": "playwright",      "marketplace": "claude-plugins-official" },
+      { "name": "figma",           "marketplace": "claude-plugins-official" },
+      { "name": "frontend-design", "marketplace": "claude-plugins-official" },
+      { "name": "vercel",          "marketplace": "claude-plugins-official" }
     ],
-    "backend": [
-      { "name": "python-pro",              "marketplace": "fullstack-dev-skills" },
-      { "name": "golang-pro",              "marketplace": "fullstack-dev-skills" },
-      { "name": "java-architect",          "marketplace": "fullstack-dev-skills" },
-      { "name": "spring-boot-engineer",    "marketplace": "fullstack-dev-skills" },
-      { "name": "nestjs-expert",           "marketplace": "fullstack-dev-skills" },
-      { "name": "fastapi-expert",          "marketplace": "fullstack-dev-skills" },
-      { "name": "django-expert",           "marketplace": "fullstack-dev-skills" },
-      { "name": "kotlin-specialist",       "marketplace": "fullstack-dev-skills" },
-      { "name": "csharp-developer",        "marketplace": "fullstack-dev-skills" },
-      { "name": "dotnet-core-expert",      "marketplace": "fullstack-dev-skills" },
-      { "name": "microservices-architect", "marketplace": "fullstack-dev-skills" },
-      { "name": "api-designer",            "marketplace": "fullstack-dev-skills" },
-      { "name": "graphql-architect",       "marketplace": "fullstack-dev-skills" },
-      { "name": "websocket-engineer",      "marketplace": "fullstack-dev-skills" }
-    ],
-    "data": [
-      { "name": "ml-pipeline",       "marketplace": "fullstack-dev-skills" },
-      { "name": "rag-architect",      "marketplace": "fullstack-dev-skills" },
-      { "name": "fine-tuning-expert", "marketplace": "fullstack-dev-skills" },
-      { "name": "prompt-engineer",    "marketplace": "fullstack-dev-skills" },
-      { "name": "pandas-pro",         "marketplace": "fullstack-dev-skills" },
-      { "name": "spark-engineer",     "marketplace": "fullstack-dev-skills" },
-      { "name": "sql-pro",            "marketplace": "fullstack-dev-skills" },
-      { "name": "database-optimizer", "marketplace": "fullstack-dev-skills" },
-      { "name": "postgres-pro",       "marketplace": "fullstack-dev-skills" }
-    ],
-    "devops": [
-      { "name": "devops-engineer",       "marketplace": "fullstack-dev-skills" },
-      { "name": "kubernetes-specialist", "marketplace": "fullstack-dev-skills" },
-      { "name": "terraform-engineer",    "marketplace": "fullstack-dev-skills" },
-      { "name": "cloud-architect",       "marketplace": "fullstack-dev-skills" },
-      { "name": "sre-engineer",          "marketplace": "fullstack-dev-skills" },
-      { "name": "monitoring-expert",     "marketplace": "fullstack-dev-skills" },
-      { "name": "chaos-engineer",        "marketplace": "fullstack-dev-skills" },
-      { "name": "cli-developer",         "marketplace": "fullstack-dev-skills" },
-      { "name": "atlassian-mcp",         "marketplace": "fullstack-dev-skills" }
-    ],
-    "uiux": [
-      { "name": "figma",          "marketplace": "claude-plugins-official" },
-      { "name": "frontend-design","marketplace": "claude-plugins-official" }
-    ],
-    "marketing":   [{ "name": "marketing",        "marketplace": "knowledge-work-plugins"       }],
-    "sales": [
-      { "name": "sales",                "marketplace": "knowledge-work-plugins"       },
-      { "name": "salesforce-developer", "marketplace": "fullstack-dev-skills"         }
-    ],
+    "data":   [],
+    "devops": [],
+    "marketing":   [{ "name": "marketing",        "marketplace": "knowledge-work-plugins" }],
+    "sales":       [{ "name": "sales",            "marketplace": "knowledge-work-plugins" }],
     "finance": [
-      { "name": "finance",            "marketplace": "knowledge-work-plugins"         },
-      { "name": "financial-analysis", "marketplace": "claude-for-financial-services"  },
-      { "name": "month-end-closer",   "marketplace": "claude-for-financial-services"  },
-      { "name": "gl-reconciler",      "marketplace": "claude-for-financial-services"  },
-      { "name": "model-builder",      "marketplace": "claude-for-financial-services"  },
-      { "name": "statement-auditor",  "marketplace": "claude-for-financial-services"  }
+      { "name": "finance",            "marketplace": "knowledge-work-plugins"        },
+      { "name": "financial-analysis", "marketplace": "claude-for-financial-services" },
+      { "name": "month-end-closer",   "marketplace": "claude-for-financial-services" },
+      { "name": "gl-reconciler",      "marketplace": "claude-for-financial-services" },
+      { "name": "model-builder",      "marketplace": "claude-for-financial-services" },
+      { "name": "statement-auditor",  "marketplace": "claude-for-financial-services" }
     ],
-    "service":     [{ "name": "customer-support", "marketplace": "knowledge-work-plugins"       }],
-    "procurement": [{ "name": "operations",       "marketplace": "knowledge-work-plugins"       }]
+    "service":     [{ "name": "customer-support", "marketplace": "knowledge-work-plugins" }],
+    "procurement": [{ "name": "operations",       "marketplace": "knowledge-work-plugins" }]
+  },
+  "skills": {
+    "global": [],
+    "embedded": [
+      { "repo": "beriberikix/zephyr-agent-skills", "subpath": "skills" }
+    ]
   }
 }

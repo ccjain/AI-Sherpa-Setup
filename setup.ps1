@@ -10,6 +10,35 @@ function Write-Info { param([string]$msg) Write-Host "[AI Sherpa] $msg" -Foregro
 function Write-Warn { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Yellow }
 function Write-Err  { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Red }
 
+$script:SkippedSteps = @()
+function Add-SkippedStep {
+    param([string]$Name, [string]$Reason, [string]$ManualInstall)
+    $script:SkippedSteps += [pscustomobject]@{ Name = $Name; Reason = $Reason; ManualInstall = $ManualInstall }
+}
+
+$script:InstallFailures = @()
+function Add-InstallFailure {
+    param([string]$Key)
+    $script:InstallFailures += $Key
+}
+function Show-SkippedStepsReport {
+    if ($script:SkippedSteps.Count -eq 0) { return }
+    Write-Host ""
+    Write-Host "======================================================" -ForegroundColor Yellow
+    Write-Host "  OPTIONAL STEPS SKIPPED ($($script:SkippedSteps.Count))" -ForegroundColor Yellow
+    Write-Host "  Setup continued, but these features are unavailable:" -ForegroundColor Yellow
+    Write-Host "======================================================" -ForegroundColor Yellow
+    foreach ($s in $script:SkippedSteps) {
+        Write-Host ""
+        Write-Host "  > $($s.Name)" -ForegroundColor Yellow
+        Write-Host "    Reason: $($s.Reason)"
+        Write-Host "    Install manually: $($s.ManualInstall)"
+    }
+    Write-Host ""
+    Write-Host "======================================================" -ForegroundColor Yellow
+    Write-Host ""
+}
+
 function Test-CommandExists {
     param([string]$Name)
     return ($null -ne (Get-Command $Name -ErrorAction SilentlyContinue))
@@ -78,25 +107,45 @@ function Install-Plugin {
     param($Entry)
     if ($Entry.marketplace) {
         claude plugin install "$($Entry.name)@$($Entry.marketplace)" --scope user
-        if ($LASTEXITCODE -ne 0) { Write-Warn "$($Entry.name) install may have failed - re-run setup to retry." }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "$($Entry.name) install failed - see error above."
+            Add-InstallFailure "$($Entry.name)@$($Entry.marketplace)"
+        }
     } elseif ($Entry.github) {
         claude plugin marketplace add "https://github.com/$($Entry.github)" --scope user 2>$null
         claude plugin install $Entry.name --scope user
-        if ($LASTEXITCODE -ne 0) { Write-Warn "$($Entry.name) install may have failed - re-run setup to retry." }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "$($Entry.name) install failed - see error above."
+            Add-InstallFailure "$($Entry.name)"
+        }
     }
 }
 
 function Register-Marketplaces {
+    param([string]$Domain = "")
     $configFile = "$ScriptDir\plugins.json"
     if (-not (Test-Path $configFile)) { return }
     try { $config = Get-Content $configFile -Raw | ConvertFrom-Json }
     catch { return }
+
+    # Collect marketplace names actually referenced by global + selected domain plugins
+    $needed = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($p in $config.global) {
+        if ($p.marketplace) { $needed.Add($p.marketplace) | Out-Null }
+    }
+    if ($Domain -and $config.domains.$Domain) {
+        foreach ($p in $config.domains.$Domain) {
+            if ($p.marketplace) { $needed.Add($p.marketplace) | Out-Null }
+        }
+    }
+
     $marketplaces = $config.marketplaces
     if (-not $marketplaces -or @($marketplaces).Count -eq 0) { return }
     foreach ($entry in @($marketplaces)) {
         $repo = if ($entry -is [string]) { $entry } else { $entry.repo }
         $name = if ($entry -is [string]) { $null } else { $entry.name }
         if (-not $repo) { continue }
+        if (-not $needed.Contains($name)) { continue }
         Write-Info "Registering marketplace: $repo"
         claude plugin marketplace add $repo --scope user 2>$null
         if ($name) {
@@ -128,6 +177,54 @@ function Install-DomainSkills {
     foreach ($entry in $plugins) { Install-Plugin $entry }
 }
 
+function Install-Skills {
+    param([string]$Domain)
+    $configFile = "$ScriptDir\plugins.json"
+    if (-not (Test-Path $configFile)) { return }
+    try { $config = Get-Content $configFile -Raw | ConvertFrom-Json } catch { return }
+    if (-not $config.skills) { return }
+
+    $entries = @()
+    if ($config.skills.global)            { $entries += @($config.skills.global) }
+    if ($Domain -and $config.skills.$Domain) { $entries += @($config.skills.$Domain) }
+    if ($entries.Count -eq 0) { return }
+
+    if (-not (Test-CommandExists "git")) {
+        Write-Warn "git not on PATH - cannot install raw skills (plugins.json 'skills' section)."
+        return
+    }
+
+    $skillsDir = "$env:USERPROFILE\.claude\skills"
+    if (-not (Test-Path $skillsDir)) { New-Item -ItemType Directory -Path $skillsDir -Force | Out-Null }
+
+    foreach ($entry in $entries) {
+        $repo    = $entry.repo
+        $subpath = if ($entry.subpath) { $entry.subpath } else { "skills" }
+        if (-not $repo) { continue }
+        $repoSlug = ($repo -replace '/', '-')
+        $tmp = Join-Path $env:TEMP "ai-sherpa-skill-$repoSlug"
+        if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+        Write-Info "Cloning skills from $repo..."
+        git clone --depth 1 "https://github.com/$repo" $tmp 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Failed to clone $repo - skipping its skills."
+            if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+            Add-InstallFailure "skills:$repo"
+            continue
+        }
+        $src = Join-Path $tmp $subpath
+        if (-not (Test-Path $src)) {
+            Write-Warn "Subpath '$subpath' not found in $repo - skipping."
+            Remove-Item $tmp -Recurse -Force
+            Add-InstallFailure "skills:$repo (missing subpath: $subpath)"
+            continue
+        }
+        Copy-Item "$src\*" $skillsDir -Recurse -Force
+        Remove-Item $tmp -Recurse -Force
+        Write-Info "Installed skills from $repo into $skillsDir"
+    }
+}
+
 function Write-GlobalSettings {
     $settingsDir  = "$env:USERPROFILE\.claude"
     $settingsFile = "$settingsDir\settings.json"
@@ -157,7 +254,7 @@ function Copy-ClaudeMd {
     $source = "$ScriptDir\domains\$Domain\CLAUDE.md"
     if (-not (Test-Path $source)) {
         Write-Err "Domain CLAUDE.md not found at: $source"
-        Write-Err "Is '$Domain' a valid domain? Valid: embedded, web, backend, data, devops"
+        Write-Err "Is '$Domain' a valid domain? Valid: embedded, web, data, devops, marketing, sales, finance, service, procurement"
         exit 1
     }
     $target = "$(Get-Location)\CLAUDE.md"
@@ -190,23 +287,110 @@ function Write-GlobalClaudeMd {
     Write-Info "Domain rules written to $target (active for all projects)"
 }
 
+function Resolve-PipCommand {
+    if (Test-CommandExists "pip3") { return "pip3" }
+    if (Test-CommandExists "pip")  { return "pip"  }
+    return $null
+}
+
+function Install-Python {
+    Write-Info "Python pip not found. Installing Python 3.12 via winget..."
+    winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "winget failed to install Python (exit $LASTEXITCODE)."
+        Add-SkippedStep -Name "Graphify (/graphify command for codebase indexing)" `
+                        -Reason "Python install failed (winget exit $LASTEXITCODE)" `
+                        -ManualInstall "Download Python 3 from https://python.org, then re-run setup.bat"
+        return $false
+    }
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("Path","User")
+    Write-Info "Python installed."
+    return $true
+}
+
 function Install-Graphify {
-    $pipCmd = $null
-    if (Test-CommandExists "pip3") { $pipCmd = "pip3" }
-    elseif (Test-CommandExists "pip") { $pipCmd = "pip" }
+    $pipCmd = Resolve-PipCommand
     if (-not $pipCmd) {
-        Write-Warn "Python pip not found - Graphify skipped. Install Python 3 and re-run setup to enable /graphify."
-        return
+        if (-not (Install-Python)) { return }
+        $pipCmd = Resolve-PipCommand
+        if (-not $pipCmd) {
+            Write-Warn "Python installed but pip is not yet on PATH."
+            Add-SkippedStep -Name "Graphify (/graphify command for codebase indexing)" `
+                            -Reason "Python installed but pip not yet on PATH in this shell" `
+                            -ManualInstall "Close and reopen the terminal, then re-run setup.bat"
+            return
+        }
     }
     Write-Info "Installing Graphify knowledge graph skill..."
     & $pipCmd install --quiet graphifyy
-    if ($LASTEXITCODE -ne 0) { Write-Warn "graphifyy install failed - re-run setup after verifying pip."; return }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "graphifyy install failed (exit $LASTEXITCODE)."
+        Add-SkippedStep -Name "Graphify (/graphify command for codebase indexing)" `
+                        -Reason "pip install graphifyy failed (exit $LASTEXITCODE)" `
+                        -ManualInstall "$pipCmd install graphifyy; graphify install"
+        return
+    }
     graphify install
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "graphify install failed - /graphify command may not be available."
+        Write-Warn "graphify install failed."
+        Add-SkippedStep -Name "Graphify (/graphify command for codebase indexing)" `
+                        -Reason "graphify install command failed (exit $LASTEXITCODE)" `
+                        -ManualInstall "graphify install"
     } else {
         Write-Info "Graphify ready. Run /graphify inside Claude Code to index your codebase."
     }
+}
+
+function Test-Installation {
+    param([string]$Domain)
+    # Primary signal: failures captured from claude plugin install exit codes
+    if ($script:InstallFailures.Count -gt 0) {
+        return ,@($script:InstallFailures)
+    }
+    # Optional cross-check: if installed_plugins.json exists at the standard
+    # path, verify expected entries are present. If missing (e.g. WSL+Windows
+    # hybrid where claude reads /mnt/c/.../.claude/), trust install exit codes.
+    $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
+    if (-not (Test-Path $installedFile)) {
+        return ,@()
+    }
+    try {
+        $installed = Get-Content $installedFile -Raw | ConvertFrom-Json
+    } catch {
+        return ,@()
+    }
+    $expected = @()
+    $globals = Read-PluginConfig -Section "global"
+    if ($globals) { $expected += @($globals) }
+    $domainPlugins = Read-PluginConfig -Section $Domain
+    if ($domainPlugins) { $expected += @($domainPlugins) }
+
+    $missing = @()
+    foreach ($entry in $expected) {
+        if (-not $entry.marketplace) { continue }
+        $key = "$($entry.name)@$($entry.marketplace)"
+        if (-not $installed.plugins.PSObject.Properties[$key]) {
+            $missing += $key
+        }
+    }
+    return ,$missing
+}
+
+function Show-VerificationReport {
+    param([string[]]$Missing)
+    Write-Host ""
+    Write-Host "======================================================" -ForegroundColor Red
+    Write-Host "  SETUP INCOMPLETE" -ForegroundColor Red
+    Write-Host "  $($Missing.Count) plugin(s) did not register in" -ForegroundColor Red
+    Write-Host "  ~/.claude/plugins/installed_plugins.json:" -ForegroundColor Red
+    Write-Host "======================================================" -ForegroundColor Red
+    foreach ($m in $Missing) { Write-Host "  [FAIL] $m" -ForegroundColor Red }
+    Write-Host ""
+    Write-Host "  Fix: re-run setup, or install manually:" -ForegroundColor Yellow
+    Write-Host "    claude plugin install <name>@<marketplace> --scope user" -ForegroundColor Yellow
+    Write-Host "======================================================" -ForegroundColor Red
+    Write-Host ""
 }
 
 function Invoke-Update {
@@ -217,6 +401,7 @@ function Invoke-Update {
         claude plugin update $entry.name
         if ($LASTEXITCODE -ne 0) { Write-Warn "$($entry.name) update may have failed - re-run --update to retry." }
     }
+    Install-Skills
     Write-GlobalSettings
     Install-Graphify
     Write-Info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
@@ -258,14 +443,14 @@ if ($Update) {
     exit 0
 }
 
+
 # Detect whether this is a user-level (double-click) or project-level run
 $currentPath = (Get-Location).Path
 $isUserLevelRun = ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath -eq $ScriptDir))
 
 $domainMap = @{
-    "1"="embedded"; "2"="web"; "3"="backend"; "4"="data"; "5"="devops";
-    "6"="marketing"; "7"="sales"; "8"="finance"; "9"="service"; "10"="procurement";
-    "11"="uiux"
+    "1"="embedded"; "2"="web"; "3"="data"; "4"="devops";
+    "5"="marketing"; "6"="sales"; "7"="finance"; "8"="service"; "9"="procurement"
 }
 
 # Prerequisites (both paths)
@@ -279,19 +464,17 @@ Write-Host ""
 Write-Host "Which domain are you working in?"
 Write-Host "  --- Engineering ---"
 Write-Host "  [1] Embedded Software (C/C++, firmware, RTOS)"
-Write-Host "  [2] Web / Frontend (React, Vue, Angular, HTML/CSS)"
-Write-Host "  [3] Backend (Node.js, Python)"
-Write-Host "  [4] Data Science / ML"
-Write-Host "  [5] DevOps / Platform"
+Write-Host "  [2] Web (full-stack: frontend + backend + UI/UX)"
+Write-Host "  [3] Data Science / ML"
+Write-Host "  [4] DevOps / Platform"
 Write-Host "  --- Business ---"
-Write-Host "  [6] Marketing"
-Write-Host "  [7] Sales"
-Write-Host "  [8] Finance / Accounting"
-Write-Host "  [9] Customer Service / Support"
-Write-Host "  [10] Procurement / Operations"
-Write-Host "  [11] UI/UX Design"
+Write-Host "  [5] Marketing"
+Write-Host "  [6] Sales"
+Write-Host "  [7] Finance / Accounting"
+Write-Host "  [8] Customer Service / Support"
+Write-Host "  [9] Procurement / Operations"
 Write-Host ""
-$domainChoice = Read-Host "Enter number [1-11]"
+$domainChoice = Read-Host "Enter number [1-9]"
 if (-not $domainMap.ContainsKey($domainChoice)) {
     Write-Err "Invalid choice: $domainChoice. Run setup.bat again."
     exit 1
@@ -299,15 +482,25 @@ if (-not $domainMap.ContainsKey($domainChoice)) {
 $domain = $domainMap[$domainChoice]
 
 # Register extra marketplaces + install skills (both paths)
-Register-Marketplaces
+Register-Marketplaces -Domain $domain
 Install-CoreSkills
 Install-DomainSkills $domain
+Install-Skills -Domain $domain
 Write-GlobalSettings
 
 if ($isUserLevelRun) {
     # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
     Write-GlobalClaudeMd $domain
     Install-Graphify
+    $missing = Test-Installation $domain
+    if ($missing.Count -gt 0) {
+        Show-VerificationReport $missing
+        Show-SkippedStepsReport
+        Print-Summary $domain -UserLevel
+        exit 1
+    }
+    Write-Info "All expected plugins verified in installed_plugins.json."
+    Show-SkippedStepsReport
     Print-Summary $domain -UserLevel
 } else {
     # Project-level: write CLAUDE.md and settings into current project directory
@@ -326,5 +519,14 @@ if ($isUserLevelRun) {
     Write-ProjectSettings
     Copy-ClaudeMd $domain $projectType
     Install-Graphify
+    $missing = Test-Installation $domain
+    if ($missing.Count -gt 0) {
+        Show-VerificationReport $missing
+        Show-SkippedStepsReport
+        Print-Summary $domain
+        exit 1
+    }
+    Write-Info "All expected plugins verified in installed_plugins.json."
+    Show-SkippedStepsReport
     Print-Summary $domain
 }
