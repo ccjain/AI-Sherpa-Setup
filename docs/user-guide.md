@@ -15,19 +15,38 @@ This guide covers three install scenarios:
 
 ## 1. What Setup Does
 
-1. Checks prerequisites — Node.js, Git, Claude Code, Python — and **auto-installs** any that
-   are missing (winget on Windows, apt/dnf/brew on Linux/macOS).
-2. Registers Claude Code marketplaces:
-   `anthropics/knowledge-work-plugins`, `anthropics/financial-services`, `jeffallan/claude-skills`.
-3. Installs global plugins for all domains: `superpowers`, `code-reviewer`, `test-master`,
-   plus `fullstack-dev-skills` which bundles 66 stack-specific skills that auto-activate by context.
-4. Installs domain-specific plugins for the domain you pick.
-5. Writes secrets-protection rules to `~/.claude/settings.json` (global) and `.claude/settings.json` (project).
-6. Writes domain rules to `~/.claude/CLAUDE.md` (user-level run) or `<project>/CLAUDE.md` (project-level run).
-7. Installs **code-review-graph** for Tree-sitter-based code intelligence and
-   blast-radius analysis. Runs in **auto mode**: a SessionStart hook ensures
-   `crg-daemon` is watching the project whenever Claude is open.
-8. **Verifies** every install succeeded; if anything failed, prints a clear FAIL report at the end.
+1. Checks **base prerequisites** — Node.js, Git, Claude Code — and **auto-installs**
+   any that are missing (winget on Windows, nvm on Linux/macOS for Node, package
+   manager for Git).
+2. Registers every Claude Code marketplace declared in `plugins.json` →
+   `marketplaces[]` (currently 8: `knowledge-work-plugins`, `claude-for-financial-services`,
+   `fullstack-dev-skills`, `antigravity-awesome-skills`, `anthropic-agent-skills`,
+   `claude-code-workflows`, `thedotmack`, `agent-browser`). Setup only registers
+   the marketplaces that are actually referenced by global / domain plugins, so
+   unused marketplaces in the list don't cost time.
+3. Installs **global Claude plugins** declared in `plugins.json` → `global[]` for
+   every domain: `superpowers`, `fullstack-dev-skills` (which bundles 66 stack-specific
+   skills like react-expert, vue-expert, python-pro, etc.), `claude-mem` (persistent
+   memory across sessions), `agent-browser` (Vercel's browser automation).
+4. Installs **domain-specific plugins** declared in `plugins.json` → `domains.<x>[]`
+   for the domain you pick.
+5. Installs **raw-skill repos** declared in `plugins.json` → `skills.<x>[]` (e.g.
+   Zephyr skills for embedded, addyosmani/styleseed for web).
+6. Installs **CLI tools** declared in `plugins.json` → `tools.global[]` plus any
+   `tools.<x>[]` for the picked domain. Currently 3 globals:
+   - `code-review-graph` (PyPI) — Tree-sitter code intelligence + MCP server.
+     Runs in **auto mode** via a SessionStart hook that keeps `crg-daemon` alive.
+   - `rtk` (cargo) — Rust shell-output compressor; 60–90% token savings.
+   - `claude-usage` (git-clone) — Local dashboard for Claude session token/cost stats.
+
+   Toolchains auto-install on demand: Python (winget/brew/apt) for PyPI tools,
+   pipx on PEP 668 systems, Rust (`Rustlang.Rustup` / `rustup-init.sh`) for cargo tools.
+7. Writes secrets-protection rules to `~/.claude/settings.json` (global) and
+   `.claude/settings.json` (project-level run).
+8. Writes domain rules to `~/.claude/CLAUDE.md` (user-level run) or
+   `<project>/CLAUDE.md` (project-level run).
+9. **Verifies** every install succeeded; if anything failed, prints a clear FAIL
+   report at the end alongside the manual install command for each.
 
 ---
 
@@ -227,9 +246,13 @@ Mentioning the skill name explicitly is enough.
 |---|---|---|
 | **Plugins** | `~/.claude/plugins/installed_plugins.json` | `claude plugin list` |
 | **Skills** | `~/.claude/skills/<name>/SKILL.md` | `dir %USERPROFILE%\.claude\skills` (Windows) or `ls ~/.claude/skills` (Linux/macOS/WSL) |
+| **PyPI tools** | On PATH (e.g. `code-review-graph`) | `where code-review-graph` (Windows) or `which code-review-graph` (Linux/macOS) |
+| **Cargo tools** | `~/.cargo/bin/<name>` (e.g. `rtk`) | `cargo install --list` |
+| **Git-clone tools** | `~/.claude/tools/<name>/` (e.g. `~/.claude/tools/claude-usage/`) | `ls ~/.claude/tools` |
 
 Each `SKILL.md` starts with frontmatter that explains when it triggers — read those if you want
-to know what's in your kit.
+to know what's in your kit. The full per-domain rollup of plugins + their internal skill counts
+lives in `docs/skills-inventory.md`.
 
 ### 6.4 Embedded domain — what you get
 
@@ -253,6 +276,27 @@ After picking domain **2** (Web):
 | `bitjaru/styleseed` | raw skills | 69 design rules + 48 shadcn components + brand skins (Toss / Stripe / Linear / Vercel / Notion) on Tailwind v4 + Radix |
 
 The `fullstack-dev-skills` global bundle still applies on top — React, Vue, Next.js, TypeScript, etc. auto-activate as usual.
+
+### 6.6 AI domain — what you get
+
+After picking domain **10** (AI / ML Agents):
+
+| Source | Type | Contents |
+|---|---|---|
+| `claude-api` plugin (`anthropic-agent-skills`) | plugin | Official Anthropic Claude API/SDK documentation skill (~18 skills inside covering prompt caching, thinking budgets, tool use, batch, files, citations, memory) |
+| `llm-application-dev` plugin (`claude-code-workflows`) | plugin | RAG, LangGraph, vector search, AI agent architectures |
+| `agent-orchestration` plugin (`claude-code-workflows`) | plugin | Multi-agent system patterns |
+| `machine-learning-ops` plugin (`claude-code-workflows`) | plugin | ML training pipelines, hyperparameter tuning, deployment, experiment tracking |
+
+### 6.7 Frontend + UI/UX domain — what you get
+
+After picking domain **11** (Frontend + UI/UX):
+
+| Source | Type | Contents |
+|---|---|---|
+| `accessibility-compliance` plugin (`claude-code-workflows`) | plugin | WCAG 2.2 AA auditing, keyboard nav, screen-reader testing |
+| `ui-design` plugin (`claude-code-workflows`) | plugin | Mobile + web UI/UX design systems |
+| `application-performance` plugin (`claude-code-workflows`) | plugin | Profiling, Core Web Vitals, observability |
 
 ---
 
@@ -278,16 +322,17 @@ claude plugin list --marketplace fullstack-dev-skills
 ```
 /help              # lists all commands available now
 /plugin            # plugin management UI
-code-review-graph build          # try invoking — confirms code-review-graph works
 ```
 
-### Common slash commands to test
+### Common slash commands + tool checks to test
 
-| Command | From plugin | Verifies |
+| Command | From | Verifies |
 |---|---|---|
-| `/verify` | superpowers | Core skills loaded |
-| `/code-review` | superpowers + code-reviewer | Review workflow active |
-| `code-review-graph build` | code-review-graph | code-review-graph installed correctly |
+| `/verify` | superpowers plugin | Core skills loaded |
+| `/code-review` | superpowers + code-reviewer skill | Review workflow active |
+| `code-review-graph --version` | PyPI tool (terminal) | code-review-graph installed |
+| `rtk --version` | cargo tool (terminal) | rtk installed and on PATH |
+| `python ~/.claude/tools/claude-usage/cli.py stats` | git-clone tool | claude-usage cloned correctly |
 
 ---
 
@@ -306,12 +351,14 @@ Everything is installed and active.
 ======================================================
   OPTIONAL STEPS SKIPPED (1)
 ======================================================
-  > code-review-graph (code-review-graph build command for codebase indexing)
-    Reason: Windows winget install Python 3 failed
-    Install manually: From Windows PowerShell: winget install Python.Python.3.12; pip install code-review-graph; graphify install
+  > code-review-graph (PyPI tool)
+    Reason: pip install code-review-graph failed (exit 1)
+    Install manually: pip install code-review-graph; code-review-graph install
 ```
-**Plugins are fine.** A non-critical step (usually code-review-graph or its Python dependency) couldn't
-install automatically. The reason and manual install command are shown. Setup is otherwise complete.
+**Plugins are fine.** A non-critical step (usually one of the `tools[]` entries
+like code-review-graph, rtk, or claude-usage, or its language toolchain) couldn't
+install automatically. The reason and manual install command are shown. Setup is
+otherwise complete.
 
 ### ❌ Setup incomplete (red block)
 ```
@@ -340,7 +387,10 @@ claude plugin install <name>@<marketplace> --scope user
 | `error: externally-managed-environment` (PEP 668) | Ubuntu 24+ blocks system pip globals | Setup uses pipx instead — update to the latest setup.sh and re-run |
 | `Plugin "<name>" not found in marketplace "<name>"` | Wrong plugin name in `plugins.json`, or marketplace is stale | Run `claude plugin marketplace update <marketplace>` and re-run setup |
 | `winget failed to install Python (exit N)` | Corporate-locked machine or network restriction | Install Python 3 manually from https://python.org and re-run setup |
+| `winget failed to install Rust (exit N)` | Corporate-locked machine, or `Rustlang.Rustup` package unavailable | Install Rust manually from https://rustup.rs (Windows) or `sudo apt-get install rustc cargo` (Linux), then re-run setup. Affects `rtk` and any other cargo-source tool. |
+| `cargo not on PATH` after Rust install | New PATH not picked up by current shell | Close and reopen your terminal, then re-run setup |
 | code-review-graph install fails in hybrid mode | Python isn't on Windows | Setup will try `winget install` via `powershell.exe`. If that fails too, install Python on Windows manually then re-run |
+| `rtk` not visible to Claude in WSL+Windows hybrid mode | rtk installed on WSL side; Windows-side Claude can't see it | On the Windows side: `winget install Rustlang.Rustup` then `cargo install --git https://github.com/rtk-ai/rtk` |
 
 ---
 
