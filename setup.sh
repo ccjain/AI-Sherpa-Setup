@@ -12,10 +12,27 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; DIM='\033[2;37m'; NC='\033[0m'
 log_info()  { echo -e "${GREEN}[AI Sherpa]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[AI Sherpa]${NC} $1"; }
 log_error() { echo -e "${RED}[AI Sherpa]${NC} $1"; }
+
+print_logo() {
+  # Use printf with %s so the body strings (which contain literal backslashes)
+  # don't conflict with the ANSI escape sequences in $CYAN / $NC. echo -e
+  # was eating the leading backslash of $NC on lines ending in '\'.
+  printf '\n'
+  printf "${CYAN}%s${NC}\n" '                                                                      /\'
+  printf "${CYAN}%s${NC}\n" '   █████╗ ██╗    ███████╗██╗  ██╗███████╗██████╗ ██████╗  █████╗     /  \'
+  printf "${CYAN}%s${NC}\n" '  ██╔══██╗██║    ██╔════╝██║  ██║██╔════╝██╔══██╗██╔══██╗██╔══██╗   / /\ \'
+  printf "${CYAN}%s${NC}\n" '  ███████║██║    ███████╗███████║█████╗  ██████╔╝██████╔╝███████║  /_/  \_\'
+  printf "${CYAN}%s${NC}\n" '  ██╔══██║██║    ╚════██║██╔══██║██╔══╝  ██╔══██╗██╔═══╝ ██╔══██║'
+  printf "${CYAN}%s${NC}\n" '  ██║  ██║██║    ███████║██║  ██║███████╗██║  ██║██║     ██║  ██║'
+  printf "${CYAN}%s${NC}\n" '  ╚═╝  ╚═╝╚═╝    ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝'
+  printf '\n'
+  printf "${DIM}%s${NC}\n" "            Guiding your team's Claude Code expedition."
+  printf '\n'
+}
 
 SKIPPED_STEPS=()
 add_skipped_step() {
@@ -914,7 +931,7 @@ main() {
     esac
   done
 
-  echo -e "${CYAN}  AI Sherpa — Company-wide Claude Code Setup${NC}"
+  print_logo
 
   if is_wsl; then
     log_info "WSL detected (${WSL_DISTRO_NAME:-Windows Subsystem for Linux})."

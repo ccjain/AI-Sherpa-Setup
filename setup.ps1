@@ -11,6 +11,28 @@ function Write-Info { param([string]$msg) Write-Host "[AI Sherpa] $msg" -Foregro
 function Write-Warn { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Yellow }
 function Write-Err  { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Red }
 
+function Show-Logo {
+    # PowerShell 5.1 console may default to a code page that mangles UTF-8 box-
+    # drawing chars. Force UTF-8 output just for this banner.
+    $prev = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        Write-Host ""
+        Write-Host "                                                                      /\"           -ForegroundColor Cyan
+        Write-Host "   █████╗ ██╗    ███████╗██╗  ██╗███████╗██████╗ ██████╗  █████╗     /  \"           -ForegroundColor Cyan
+        Write-Host "  ██╔══██╗██║    ██╔════╝██║  ██║██╔════╝██╔══██╗██╔══██╗██╔══██╗   / /\ \"          -ForegroundColor Cyan
+        Write-Host "  ███████║██║    ███████╗███████║█████╗  ██████╔╝██████╔╝███████║  /_/  \_\"         -ForegroundColor Cyan
+        Write-Host "  ██╔══██║██║    ╚════██║██╔══██║██╔══╝  ██╔══██╗██╔═══╝ ██╔══██║"                    -ForegroundColor Cyan
+        Write-Host "  ██║  ██║██║    ███████║██║  ██║███████╗██║  ██║██║     ██║  ██║"                    -ForegroundColor Cyan
+        Write-Host "  ╚═╝  ╚═╝╚═╝    ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝"                    -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "            Guiding your team's Claude Code expedition." -ForegroundColor DarkGray
+        Write-Host ""
+    } finally {
+        [Console]::OutputEncoding = $prev
+    }
+}
+
 $script:SkippedSteps = @()
 function Add-SkippedStep {
     param([string]$Name, [string]$Reason, [string]$ManualInstall)
@@ -698,9 +720,7 @@ function Print-Summary {
 }
 
 # --- Main ---
-Write-Host ""
-Write-Host "  AI Sherpa -- Company-wide Claude Code Setup" -ForegroundColor Cyan
-Write-Host ""
+Show-Logo
 
 if ($Update) {
     Invoke-Update
