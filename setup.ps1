@@ -303,7 +303,7 @@ function Install-Python {
     winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "winget failed to install Python (exit $LASTEXITCODE)."
-        Add-SkippedStep -Name "Graphify (/graphify command for codebase indexing)" `
+        Add-SkippedStep -Name "code-review-graph (auto-mode code review indexing)" `
                         -Reason "Python install failed (winget exit $LASTEXITCODE)" `
                         -ManualInstall "Download Python 3 from https://python.org, then re-run setup.bat"
         return $false
@@ -314,36 +314,37 @@ function Install-Python {
     return $true
 }
 
-function Install-Graphify {
+function Install-CodeReviewGraph {
     $pipCmd = Resolve-PipCommand
     if (-not $pipCmd) {
         if (-not (Install-Python)) { return }
         $pipCmd = Resolve-PipCommand
         if (-not $pipCmd) {
             Write-Warn "Python installed but pip is not yet on PATH."
-            Add-SkippedStep -Name "Graphify (/graphify command for codebase indexing)" `
+            Add-SkippedStep -Name "code-review-graph (auto-mode code review indexing)" `
                             -Reason "Python installed but pip not yet on PATH in this shell" `
                             -ManualInstall "Close and reopen the terminal, then re-run setup.bat"
             return
         }
     }
-    Write-Info "Installing Graphify knowledge graph skill..."
-    & $pipCmd install --quiet graphifyy
+    Write-Info "Installing code-review-graph (Tree-sitter code intelligence)..."
+    & $pipCmd install --quiet code-review-graph
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "graphifyy install failed (exit $LASTEXITCODE)."
-        Add-SkippedStep -Name "Graphify (/graphify command for codebase indexing)" `
-                        -Reason "pip install graphifyy failed (exit $LASTEXITCODE)" `
-                        -ManualInstall "$pipCmd install graphifyy; graphify install"
+        Write-Warn "code-review-graph pip install failed (exit $LASTEXITCODE)."
+        Add-SkippedStep -Name "code-review-graph (auto-mode code review indexing)" `
+                        -Reason "pip install code-review-graph failed (exit $LASTEXITCODE)" `
+                        -ManualInstall "$pipCmd install code-review-graph; code-review-graph install"
         return
     }
-    graphify install
+    code-review-graph install
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "graphify install failed."
-        Add-SkippedStep -Name "Graphify (/graphify command for codebase indexing)" `
-                        -Reason "graphify install command failed (exit $LASTEXITCODE)" `
-                        -ManualInstall "graphify install"
+        Write-Warn "code-review-graph install (MCP / platform registration) failed."
+        Add-SkippedStep -Name "code-review-graph (auto-mode code review indexing)" `
+                        -Reason "code-review-graph install command failed (exit $LASTEXITCODE)" `
+                        -ManualInstall "code-review-graph install"
     } else {
-        Write-Info "Graphify ready. Run /graphify inside Claude Code to index your codebase."
+        Write-Info "code-review-graph ready. Auto-mode runs via SessionStart hook (crg-daemon)."
+        Write-Info "Tip: copy templates\code-review-graphignore into each project root for sensible default excludes."
     }
 }
 
@@ -408,7 +409,7 @@ function Invoke-Update {
     }
     Install-Skills
     Write-GlobalSettings
-    Install-Graphify
+    Install-CodeReviewGraph
     Write-Info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
 
@@ -430,7 +431,7 @@ function Print-Summary {
     Write-Host ""
     Write-Host "  Next steps:"
     Write-Host "  1. Start Claude Code:   claude"
-    Write-Host "  2. Index your codebase: /graphify   (run inside Claude Code)"
+    Write-Host "  2. Code-review graph runs in auto-mode via SessionStart hook (no manual step)."
     Write-Host "  3. Start coding -- AI Sherpa rules are active automatically"
     Write-Host ""
     Write-Host "  Update later: `"$ScriptDir\setup.bat`" --update"
@@ -515,7 +516,7 @@ if ($domain -eq "embedded") {
 if ($isUserLevelRun) {
     # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
     Write-GlobalClaudeMd $domain
-    Install-Graphify
+    Install-CodeReviewGraph
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing
@@ -542,7 +543,7 @@ if ($isUserLevelRun) {
     $projectType = $ptMap[$projectChoice]
     Write-ProjectSettings
     Copy-ClaudeMd $domain $projectType
-    Install-Graphify
+    Install-CodeReviewGraph
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing

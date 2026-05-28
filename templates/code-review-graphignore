@@ -1,0 +1,80 @@
+# AI Sherpa default ignores for code-review-graph
+#
+# Place this file at your project root as `.code-review-graphignore`.
+# code-review-graph will skip everything matched here when building the graph.
+# Patterns use gitignore syntax.
+#
+# Re-generate or extend as your project grows. Lines starting with `#` are
+# comments; blank lines are ignored.
+
+# --- Build artifacts -----------------------------------------------------
+build/
+dist/
+out/
+target/
+bin/
+obj/
+debug/
+release/
+.build/
+
+# --- Language ecosystems -------------------------------------------------
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+vendor/
+.bundle/
+.gradle/
+.cargo/target/
+
+# --- Embedded / firmware artifacts ---------------------------------------
+*.bin
+*.hex
+*.elf
+*.map
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+
+# --- Datasheets and reference PDFs ---------------------------------------
+# These are reference material, not source; including them blows up the
+# graph with non-code content.
+datasheets/
+docs/datasheets/
+reference/datasheets/
+*.pdf
+
+# --- Large generated content ---------------------------------------------
+coverage/
+htmlcov/
+.nyc_output/
+*.log
+*.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+Cargo.lock
+
+# --- Editor / OS metadata -------------------------------------------------
+.idea/
+.vscode/
+.vs/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- AI Sherpa generated state -------------------------------------------
+.claude/skills/
+.code-review-graph/
+graphify-out/

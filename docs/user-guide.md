@@ -24,7 +24,9 @@ This guide covers three install scenarios:
 4. Installs domain-specific plugins for the domain you pick.
 5. Writes secrets-protection rules to `~/.claude/settings.json` (global) and `.claude/settings.json` (project).
 6. Writes domain rules to `~/.claude/CLAUDE.md` (user-level run) or `<project>/CLAUDE.md` (project-level run).
-7. Installs **Graphify** for codebase indexing (`/graphify` command).
+7. Installs **code-review-graph** for Tree-sitter-based code intelligence and
+   blast-radius analysis. Runs in **auto mode**: a SessionStart hook ensures
+   `crg-daemon` is watching the project whenever Claude is open.
 8. **Verifies** every install succeeded; if anything failed, prints a clear FAIL report at the end.
 
 ---
@@ -56,11 +58,11 @@ Setup runs for 2–5 minutes. Restart your terminal, then:
 claude
 ```
 
-Inside Claude Code, index your codebase once:
-
-```
-/graphify
-```
+code-review-graph runs in **auto mode** — no manual indexing step. The
+SessionStart hook starts `crg-daemon` on first session and reuses it on
+subsequent sessions. Drop a `.code-review-graphignore` at your project
+root (template at `templates/code-review-graphignore` in this repo) to
+control what gets indexed.
 
 ---
 
@@ -86,7 +88,7 @@ After setup:
 
 ```bash
 claude
-/graphify
+# code-review-graph is in auto mode — no manual step needed
 ```
 
 ---
@@ -117,12 +119,12 @@ The script detects the hybrid and prints:
 It then:
 - Writes `CLAUDE.md` and `settings.json` to `/mnt/c/Users/<you>/.claude/` (Windows-side, where
   the Windows `claude.exe` actually reads from).
-- Installs Graphify on the **Windows** side by calling `powershell.exe` → `winget install Python`
-  → `pip install graphifyy` — no need to leave WSL.
+- Installs code-review-graph on the **Windows** side by calling `powershell.exe` → `winget install Python`
+  → `pip install code-review-graph` — no need to leave WSL.
 - Plugins land on the Windows side too (they're already there if you've run setup before).
 
 After this, `claude` works identically from PowerShell and WSL — same plugins, same rules,
-same Graphify.
+same code-review-graph.
 
 ### Three caveats for hybrid users
 
@@ -172,7 +174,7 @@ directly:
 ```
 /code-review                   # from the code-reviewer plugin
 /verify                        # from superpowers
-/graphify                      # from graphifyy
+code-review-graph build                      # from code-review-graph
 /help                          # list every command available right now
 /plugin                        # plugin management UI inside Claude Code
 ```
@@ -276,7 +278,7 @@ claude plugin list --marketplace fullstack-dev-skills
 ```
 /help              # lists all commands available now
 /plugin            # plugin management UI
-/graphify          # try invoking — confirms Graphify works
+code-review-graph build          # try invoking — confirms code-review-graph works
 ```
 
 ### Common slash commands to test
@@ -285,7 +287,7 @@ claude plugin list --marketplace fullstack-dev-skills
 |---|---|---|
 | `/verify` | superpowers | Core skills loaded |
 | `/code-review` | superpowers + code-reviewer | Review workflow active |
-| `/graphify` | graphifyy | Graphify installed correctly |
+| `code-review-graph build` | code-review-graph | code-review-graph installed correctly |
 
 ---
 
@@ -304,11 +306,11 @@ Everything is installed and active.
 ======================================================
   OPTIONAL STEPS SKIPPED (1)
 ======================================================
-  > Graphify (/graphify command for codebase indexing)
+  > code-review-graph (code-review-graph build command for codebase indexing)
     Reason: Windows winget install Python 3 failed
-    Install manually: From Windows PowerShell: winget install Python.Python.3.12; pip install graphifyy; graphify install
+    Install manually: From Windows PowerShell: winget install Python.Python.3.12; pip install code-review-graph; graphify install
 ```
-**Plugins are fine.** A non-critical step (usually Graphify or its Python dependency) couldn't
+**Plugins are fine.** A non-critical step (usually code-review-graph or its Python dependency) couldn't
 install automatically. The reason and manual install command are shown. Setup is otherwise complete.
 
 ### ❌ Setup incomplete (red block)
@@ -338,7 +340,7 @@ claude plugin install <name>@<marketplace> --scope user
 | `error: externally-managed-environment` (PEP 668) | Ubuntu 24+ blocks system pip globals | Setup uses pipx instead — update to the latest setup.sh and re-run |
 | `Plugin "<name>" not found in marketplace "<name>"` | Wrong plugin name in `plugins.json`, or marketplace is stale | Run `claude plugin marketplace update <marketplace>` and re-run setup |
 | `winget failed to install Python (exit N)` | Corporate-locked machine or network restriction | Install Python 3 manually from https://python.org and re-run setup |
-| Graphify install fails in hybrid mode | Python isn't on Windows | Setup will try `winget install` via `powershell.exe`. If that fails too, install Python on Windows manually then re-run |
+| code-review-graph install fails in hybrid mode | Python isn't on Windows | Setup will try `winget install` via `powershell.exe`. If that fails too, install Python on Windows manually then re-run |
 
 ---
 

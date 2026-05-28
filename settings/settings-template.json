@@ -23,18 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node -e \"const fs=require('fs');if(fs.existsSync('graphify-out/graph.json')){try{require('child_process').execSync('graphify update .',{stdio:'ignore'})}catch(e){}}else{process.stderr.write('[AI Sherpa] No Graphify index for this project. Run /graphify to build one.\\n');process.exit(2)}\"",
-            "timeout": 60000
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node -e \"const fs=require('fs');if(fs.existsSync('graphify-out/graph.json')){try{require('child_process').execSync('graphify update .',{stdio:'ignore'})}catch(e){}}\"",
+            "command": "node -e \"const cp=require('child_process');try{cp.execSync('crg-daemon status',{stdio:'ignore'})}catch(e){try{const p=cp.spawn('crg-daemon',['start'],{detached:true,stdio:'ignore'});p.unref()}catch(e2){try{cp.execSync('code-review-graph build --quiet',{stdio:'ignore'})}catch(e3){}}}\"",
             "timeout": 60000
           }
         ]

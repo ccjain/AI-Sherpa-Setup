@@ -335,7 +335,7 @@ print_summary() {
   echo ""
   echo "  Next steps:"
   echo "  1. Start Claude Code:   claude"
-  echo "  2. Index your codebase: /graphify   (run inside Claude Code)"
+  echo "  2. Code-review graph runs in auto-mode via SessionStart hook (no manual step)."
   echo "  3. Start coding — AI Sherpa rules are active automatically"
   echo ""
   echo "  Update later: bash \"$SCRIPT_DIR/setup.sh\" --update"
@@ -372,7 +372,7 @@ install_python() {
   if [[ $rc -ne 0 ]]; then
     log_warn "Automatic Python install failed."
     add_skipped_step \
-      "Graphify (/graphify command for codebase indexing)" \
+      "code-review-graph (auto-mode code review indexing)" \
       "Automatic Python install failed (no supported package manager, or install command exited non-zero)" \
       "Install Python 3 from https://python.org (or via your package manager), then re-run setup.sh"
     return 1
@@ -398,17 +398,17 @@ has_windows_interop() {
   command -v powershell.exe >/dev/null 2>&1
 }
 
-install_graphify_windows_side() {
+install_code_review_graph_windows_side() {
   if ! has_windows_interop; then
     log_warn "Windows interop (powershell.exe) not available from this WSL distro."
     add_skipped_step \
-      "Graphify (/graphify command for codebase indexing)" \
+      "code-review-graph (auto-mode code review indexing)" \
       "Hybrid mode requires Windows interop, which is disabled in this WSL distro" \
-      "From Windows PowerShell: winget install Python.Python.3.12 ; py -m pip install graphifyy ; graphify install"
+      "From Windows PowerShell: winget install Python.Python.3.12 ; py -m pip install code-review-graph ; code-review-graph install"
     return 1
   fi
 
-  log_info "Installing Graphify on Windows (via powershell.exe from WSL)..."
+  log_info "Installing code-review-graph on Windows (via powershell.exe from WSL)..."
 
   # Find a working Windows pip invocation. Order:
   #   1. pip              - direct, if pip.exe is on PATH
@@ -436,24 +436,24 @@ install_graphify_windows_side() {
     if [[ -z "$pip_cmd" ]]; then
       log_warn "Could not find a working Windows pip after install attempt."
       add_skipped_step \
-        "Graphify (/graphify command for codebase indexing)" \
+        "code-review-graph (auto-mode code review indexing)" \
         "Windows Python may be installed but pip is not reachable (often: Microsoft Store python stub intercepts python.exe, and py.exe / pip.exe are not on PATH)" \
-        "From Windows PowerShell: py -m pip install graphifyy ; graphify install   (or install Python from https://python.org with 'Add to PATH' checked)"
+        "From Windows PowerShell: py -m pip install code-review-graph ; code-review-graph install   (or install Python from https://python.org with 'Add to PATH' checked)"
       return 1
     fi
   fi
 
-  log_info "Installing graphifyy on Windows (using: $pip_cmd)..."
-  if ! powershell.exe -NoProfile -Command "$pip_cmd install --quiet graphifyy"; then
-    log_warn "Windows pip install graphifyy failed."
+  log_info "Installing code-review-graph on Windows (using: $pip_cmd)..."
+  if ! powershell.exe -NoProfile -Command "$pip_cmd install --quiet code-review-graph"; then
+    log_warn "Windows pip install code-review-graph failed."
     add_skipped_step \
-      "Graphify (/graphify command for codebase indexing)" \
-      "Windows pip install graphifyy failed (using: $pip_cmd)" \
-      "From Windows PowerShell: $pip_cmd install graphifyy ; graphify install"
+      "code-review-graph (auto-mode code review indexing)" \
+      "Windows pip install code-review-graph failed (using: $pip_cmd)" \
+      "From Windows PowerShell: $pip_cmd install code-review-graph ; code-review-graph install"
     return 1
   fi
 
-  # graphify.exe is installed into Python's Scripts directory, which is often
+  # code-review-graph.exe is installed into Python's Scripts directory, which is often
   # NOT on Windows PATH. Resolve the absolute path via Python's sysconfig
   # and invoke it directly. Try the standard Scripts dir, then the user one.
   local py_cmd="py"
@@ -468,41 +468,41 @@ install_graphify_windows_side() {
   user_scripts=$(powershell.exe -NoProfile -Command "$py_cmd -c \"import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))\"" 2>/dev/null | tr -d '\r\n')
 
   if [[ -n "$sys_scripts" ]] && \
-     powershell.exe -NoProfile -Command "Test-Path -LiteralPath '$sys_scripts\\graphify.exe'" 2>/dev/null | grep -qi true; then
-    graphify_exe="$sys_scripts\\graphify.exe"
+     powershell.exe -NoProfile -Command "Test-Path -LiteralPath '$sys_scripts\\code-review-graph.exe'" 2>/dev/null | grep -qi true; then
+    graphify_exe="$sys_scripts\\code-review-graph.exe"
   elif [[ -n "$user_scripts" ]] && \
-       powershell.exe -NoProfile -Command "Test-Path -LiteralPath '$user_scripts\\graphify.exe'" 2>/dev/null | grep -qi true; then
-    graphify_exe="$user_scripts\\graphify.exe"
+       powershell.exe -NoProfile -Command "Test-Path -LiteralPath '$user_scripts\\code-review-graph.exe'" 2>/dev/null | grep -qi true; then
+    graphify_exe="$user_scripts\\code-review-graph.exe"
   fi
 
   if [[ -z "$graphify_exe" ]]; then
-    log_warn "graphify.exe not found in Python's Scripts directory after install."
+    log_warn "code-review-graph.exe not found in Python's Scripts directory after install."
     add_skipped_step \
-      "Graphify (/graphify command for codebase indexing)" \
-      "graphifyy installed but graphify.exe not found at expected location" \
-      "From Windows PowerShell: $py_cmd -m pip show graphifyy ; then add the package's Scripts dir to PATH and run: graphify install"
+      "code-review-graph (auto-mode code review indexing)" \
+      "code-review-graph installed but code-review-graph.exe not found at expected location" \
+      "From Windows PowerShell: $py_cmd -m pip show code-review-graph ; then add the package's Scripts dir to PATH and run: code-review-graph install"
     return 1
   fi
 
-  log_info "Running graphify install (via $graphify_exe)..."
+  log_info "Running code-review-graph install (via $graphify_exe)..."
   if ! powershell.exe -NoProfile -Command "& '$graphify_exe' install"; then
-    log_warn "Windows graphify install failed."
+    log_warn "Windows code-review-graph install failed."
     add_skipped_step \
-      "Graphify (/graphify command for codebase indexing)" \
-      "graphify install command failed (graphifyy was installed but post-install step failed)" \
+      "code-review-graph (auto-mode code review indexing)" \
+      "code-review-graph install command failed (code-review-graph was installed but post-install step failed)" \
       "From Windows PowerShell: & '$graphify_exe' install"
     return 1
   fi
 
-  log_info "Graphify ready (installed on Windows). Run /graphify inside Claude Code."
+  log_info "code-review-graph ready (installed on Windows). Auto-mode runs via SessionStart hook."
   return 0
 }
 
-install_graphify() {
-  # In WSL+Windows-claude hybrid: install Graphify on the WINDOWS side using
-  # powershell.exe (WSL interop). The Windows-side claude can then invoke it.
+install_code_review_graph() {
+  # In WSL+Windows-claude hybrid: install code-review-graph on the WINDOWS side
+  # using powershell.exe (WSL interop). The Windows-side claude can then invoke it.
   if is_windows_claude_hybrid; then
-    install_graphify_windows_side
+    install_code_review_graph_windows_side
     return
   fi
 
@@ -515,7 +515,7 @@ install_graphify() {
     if [[ -z "$pip_cmd" ]]; then
       log_warn "Python installed but pip is not yet on PATH."
       add_skipped_step \
-        "Graphify (/graphify command for codebase indexing)" \
+        "code-review-graph (auto-mode code review indexing)" \
         "Python installed but pip not yet on PATH in this shell" \
         "Open a new shell, then re-run setup.sh"
       return
@@ -524,46 +524,47 @@ install_graphify() {
 
   # On macOS (no PEP 668) we can use pip directly. On Linux, PEP 668 blocks
   # system pip — use pipx, which keeps each CLI tool in its own venv.
-  log_info "Installing Graphify knowledge graph skill..."
+  log_info "Installing code-review-graph (Tree-sitter code intelligence)..."
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    if ! "$pip_cmd" install --quiet graphifyy; then
-      log_warn "graphifyy install failed."
+    if ! "$pip_cmd" install --quiet code-review-graph; then
+      log_warn "code-review-graph install failed."
       add_skipped_step \
-        "Graphify (/graphify command for codebase indexing)" \
-        "pip install graphifyy failed" \
-        "$pip_cmd install graphifyy && graphify install"
+        "code-review-graph (auto-mode code review indexing)" \
+        "pip install code-review-graph failed" \
+        "$pip_cmd install code-review-graph && code-review-graph install"
       return
     fi
   else
     if ! ensure_pipx; then
       log_warn "pipx is required on PEP 668 systems but could not be installed."
       add_skipped_step \
-        "Graphify (/graphify command for codebase indexing)" \
+        "code-review-graph (auto-mode code review indexing)" \
         "pipx is required on PEP 668 systems and could not be installed" \
-        "sudo apt-get install -y pipx && pipx install graphifyy && graphify install"
+        "sudo apt-get install -y pipx && pipx install code-review-graph && code-review-graph install"
       return
     fi
     # Make sure pipx's bin dir is reachable in this shell
     export PATH="$HOME/.local/bin:$PATH"
-    if ! pipx install graphifyy; then
-      log_warn "pipx install graphifyy failed."
+    if ! pipx install code-review-graph; then
+      log_warn "pipx install code-review-graph failed."
       add_skipped_step \
-        "Graphify (/graphify command for codebase indexing)" \
-        "pipx install graphifyy failed" \
-        "pipx install graphifyy && graphify install"
+        "code-review-graph (auto-mode code review indexing)" \
+        "pipx install code-review-graph failed" \
+        "pipx install code-review-graph && code-review-graph install"
       return
     fi
   fi
 
-  if ! graphify install; then
-    log_warn "graphify install failed."
+  if ! code-review-graph install; then
+    log_warn "code-review-graph install failed."
     add_skipped_step \
-      "Graphify (/graphify command for codebase indexing)" \
-      "graphify install command failed" \
-      "graphify install"
+      "code-review-graph (auto-mode code review indexing)" \
+      "code-review-graph install command failed" \
+      "code-review-graph install"
     return
   fi
-  log_info "Graphify ready. Run /graphify inside Claude Code to index your codebase."
+  log_info "code-review-graph ready. Auto-mode runs via SessionStart hook (crg-daemon)."
+  log_info "Tip: copy templates/code-review-graphignore into each project root for sensible default excludes."
 }
 
 verify_installation() {
@@ -637,7 +638,7 @@ run_update() {
   fi
   install_skills
   write_settings
-  install_graphify
+  install_code_review_graph
   log_info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
 
@@ -789,7 +790,7 @@ main() {
     write_project_settings
     copy_claude_md "$domain" "$project_type"
   fi
-  install_graphify
+  install_code_review_graph
 
   # --- Embedded-specific: detect Windows toolchains/flashers via powershell.exe ---
   # Even in hybrid mode the user's toolchains live on Windows; calling powershell.exe
