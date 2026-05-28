@@ -412,6 +412,8 @@ ln -sf /mnt/c/Users/Admin/.claude/settings.json ~/.claude/settings.json
 
 ## 14. More Guides
 
+- [Admin Guide — adding plugins and skills](admin-guide.md) (for whoever curates `plugins.json`)
+- [Skills & Plugins Inventory](skills-inventory.md) (generated — what's currently configured per domain)
 - [Do's & Don'ts Reference Card](dos-and-donts.md)
 - [How to Report AI Errors](feedback-guide.md)
 - [Windows-specific Setup Notes](windows-setup.md) (if present)
