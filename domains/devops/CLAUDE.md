@@ -30,3 +30,12 @@ These rules apply to all DevOps and platform engineering projects. They extend c
 - Always pin GitHub Actions to a specific SHA, not a mutable tag (`uses: actions/checkout@abc1234` not `@v3`)
 - Never print secrets to workflow logs — use `::add-mask::` for sensitive values
 - Store all API keys and tokens as GitHub Secrets — never in workflow YAML
+
+---
+
+## Bundled Stack Skills
+
+The globally installed `fullstack-dev-skills` plugin includes skills for **Kubernetes**,
+**Terraform**, and **Atlassian/Jira** that auto-activate when working with those
+tools. No additional install is needed. Mention the tooling explicitly in your prompt
+if a skill isn't activating when you expect it to.

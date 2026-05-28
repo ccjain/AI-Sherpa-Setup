@@ -10,7 +10,7 @@
 - **What this project does:** [One sentence]
 - **Primary language(s):** [e.g. Python 3.11, TypeScript 5.x]
 - **Framework(s):** [e.g. FastAPI, React 18]
-- **Domain:** [Embedded / Web / Backend / Data / DevOps]
+- **Domain:** [Embedded / Web / Data / DevOps / Marketing / Sales / Finance / Service / Procurement]
 
 ---
 

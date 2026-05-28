@@ -1,59 +1,195 @@
-# AI Sherpa — Global Rules
+# CLAUDE.md
 
-These rules apply to ALL projects and ALL domains. Do not remove or override them.
+Engineering guidelines for AI-assisted development across our **embedded**,
+**web**, and **AI** domains.
 
----
+## Purpose & Philosophy
 
-## Pre-Flight Check (Run Before EVERY Session)
+We are a mid-sized company building across embedded systems, web platforms, and
+AI. These guidelines exist to make AI-assisted coding *more* effective, not to
+box it in. The intent is to reduce common failure modes while leaving room for
+the model to apply judgment, propose better approaches, and use the full power
+of AI on each task.
 
-Before touching any code, complete both steps:
-
-### Step 1 — NDA & Confidentiality
-Ask the developer:
-> "Before we start — can this project's code be shared with Anthropic's API? Does this project have any NDA, confidentiality agreement, or export control restrictions?"
-
-Also scan the repository for: `NDA.md`, `NDA.txt`, `CONFIDENTIAL.md`, `CONFIDENTIAL.txt`, any file with "confidential", "proprietary", "nda", or "trade-secret" in the filename, or a LICENSE file containing "proprietary" or "all rights reserved".
-
-If found, stop and report:
-> "⚠ Found a possible confidentiality file: `[filename]`. Confirm it is safe to send this code to Anthropic's API before continuing."
-
-Never assume permission. Explicit developer confirmation required every session.
-
-### Step 2 — Architecture Understanding
-Before any task, read and understand the existing architecture. Use graphify to explore the codebase (graphify is the codebase knowledge-graph tool — installed by setup.bat/setup.sh, invoked via `/graphify` in Claude Code). If the architecture is unclear or undocumented, ask the developer to explain it before writing any code.
+**Default posture:** bias toward completeness. Do the complete thing — full
+implementations, full test coverage, all edge cases — because AI-assisted coding
+makes the marginal cost of completeness near-zero. This applies across all work,
+not just large tasks. The model is trusted to use the full power of AI; these
+guidelines steer that power toward thorough, finished work rather than limiting
+it.
 
 ---
 
-## Always Do
+## Hard Constraints
 
-1. Complete the Pre-Flight Check before starting any session
-2. Write tests before or alongside new code
-3. Request code review before marking a task complete — use `/requesting-code-review`
-4. Plan before implementing — use `/writing-plans` for non-trivial tasks
-5. State what you are about to do before doing it
-6. Prefer editing existing files over creating new ones
-7. Flag uncertainty explicitly — never guess silently
-8. Confirm task understanding with the developer if requirements are ambiguous
+These are non-negotiable structural rules.
 
----
-
-## Never Do
-
-1. Run destructive commands (rm -rf, DROP TABLE, force-push, reset --hard) without explicit developer confirmation
-2. Commit secrets, credentials, API keys, or passwords
-3. Read, display, or log contents of `.env`, `*.key`, `*.pem`, or credential files
-4. If a command prints secrets to stdout — stop and do not include the output in your response
-5. Skip tests or mark work complete without running and verifying
-6. Generate code for unknown APIs without checking their documentation first
-7. Make architectural changes without a written plan reviewed by a human
-8. Add features beyond what was explicitly requested (YAGNI)
-9. Add error handling for scenarios that are provably impossible given the current system design — if unsure, ask before skipping
-10. Add comments explaining WHAT code does — only WHY if non-obvious
-11. Push to main/master directly
-12. Assume a task is done without running it
+- **Modularity:** Code must be modular. Decompose by responsibility, not
+  convenience.
+- **File size:** No single source file may exceed **2000 lines**. Approaching
+  the limit is a signal to split along clean boundaries — not to compress.
+- **Domain awareness:** Embedded, web, and AI code have different constraints
+  (memory/timing for embedded, security/UX for web, reproducibility/data for
+  AI). Apply the conventions of the domain you're working in.
 
 ---
 
-## Secrets Protection
+## Guardrails
 
-`.claudeignore` is unreliable for blocking file access. Protection is enforced via `settings.json` deny rules (written by setup script). As an additional layer, never read or reference the content of any file matching: `.env`, `.env.*`, `*.key`, `*.pem`, `*.p12`, `*.pfx`, files in `secrets/`, `credentials/`, `.aws/`, `.ssh/`.
+Non-negotiable operational rules. These sit alongside Hard Constraints.
+
+### Secrets Protection
+
+- Never read, display, or log the contents of files matching: `.env`, `.env.*`,
+  `*.key`, `*.pem`, `*.p12`, `*.pfx`, or anything under `secrets/`,
+  `credentials/`, `.aws/`, `.ssh/`.
+- If a command prints secrets to stdout — stop and do not include the output in
+  your response.
+- `.claudeignore` is unreliable for blocking file access. Protection is enforced
+  via `settings.json` deny rules (written by the setup script); the rules above
+  are an additional behavioral layer.
+- Never commit secrets, credentials, API keys, or passwords.
+
+### Destructive-Command Gate
+
+- Require explicit developer confirmation before running destructive commands:
+  `rm -rf`, `DROP TABLE`, `git push --force`, `git reset --hard`.
+- Never push to `main` / `master` directly.
+
+---
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them — don't pick silently.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+---
+
+## 2. Simplicity First (subordinate to Boil the Lake)
+
+**No speculative complexity — but never at the cost of completeness.**
+
+- No abstractions for single-use code.
+- No error handling for genuinely impossible scenarios.
+- **Precedence:** When simplicity and completeness conflict, completeness wins.
+  This principle only forbids *speculative* complexity — abstractions and code
+  paths nothing actually needs. It must never be used to justify skipping real
+  requirements, edge cases, or tests. If in doubt, build the complete version
+  (see "Boil the Lake").
+
+---
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't refactor things that aren't broken.
+- If you notice unrelated dead code, mention it — don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+---
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria enable independent looping. Weak criteria ("make it
+work") require constant clarification.
+
+---
+
+## 5. Boil the Lake (Completeness) — Primary Principle
+
+**This is our team's core inclination.** When in doubt, do the complete thing.
+
+AI-assisted coding makes the marginal cost of completeness near-zero. When the
+complete implementation costs minutes more than the shortcut, take the complete
+path — every time.
+
+- **Lake vs. ocean:** A "lake" is boilable — full test coverage for a module,
+  all edge cases, complete error paths. An "ocean" is not — full-system
+  rewrites, multi-quarter migrations. Boil lakes. Flag oceans as out of scope.
+- **Completeness is cheap.** Prefer the full implementation over the 90% one
+  when the delta is small. Don't defer tests to a "follow-up" — tests are the
+  cheapest lake to boil.
+- When estimating, frame both costs: e.g. "~2 weeks human / ~1 hour
+  AI-assisted."
+
+---
+
+## 6. Search Before Building
+
+First instinct: "has someone already solved this?" — not "let me design it from
+scratch." Before building anything involving unfamiliar patterns,
+infrastructure, or runtime capabilities, check first. The cost of checking is
+near-zero; the cost of reinventing a worse version is not.
+
+**Three layers of knowledge:**
+- **Layer 1 — Tried and true.** Standard, battle-tested patterns. Risk: assuming
+  the obvious answer is right when occasionally it isn't.
+- **Layer 2 — New and popular.** Current best practices and ecosystem trends.
+  Search for these, but scrutinize — the crowd can be wrong about new things.
+- **Layer 3 — First principles.** Original reasoning about the specific problem.
+  The most valuable layer. Prize it.
+
+The best work avoids reinventing the wheel (Layer 1) *and* makes out-of-
+distribution observations (Layer 3). When the conventional approach is provably
+wrong for our case, name it and build on that insight.
+
+---
+
+## 7. User Sovereignty
+
+**AI recommends. Users decide. This rule overrides all others.**
+
+Model agreement is a strong signal, not a mandate. Engineers hold context the
+model lacks: domain specifics, business relationships, timing, taste, unshared
+plans. When the model is confident a change is better but it diverges from the
+engineer's stated direction:
+
+1. Present the recommendation.
+2. Explain why it seems better.
+3. State what context might be missing.
+4. **Ask. Never act unilaterally.**
+
+The pattern is generation → verification: AI generates, the human verifies and
+decides. Never skip verification out of confidence.
+
+---
+
+## How These Work Together
+
+- *Think Before Coding* and *Search Before Building* run first: understand the
+  problem and the landscape.
+- *Simplicity First* is subordinate to *Boil the Lake*: avoid speculative
+  complexity, but when the two conflict, completeness always wins. Build the
+  full version of what's needed.
+- *Surgical Changes* and *Goal-Driven Execution* govern how changes are made and
+  verified.
+- *User Sovereignty* sits above all of them: search first, build the complete
+  version of the *right* thing — but the engineer makes the final call.
+
+The worst outcome is a complete version of something that already exists as a
+one-liner. The best outcome is a complete version of something nobody thought of
+yet — because you searched, understood the landscape, and saw what others missed.

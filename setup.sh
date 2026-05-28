@@ -173,7 +173,7 @@ _install_plugin() {
       add_install_failure "$name@$source"
     fi
   elif [[ "$type" == "github" ]]; then
-    claude plugin marketplace add "https://github.com/$source" --scope user 2>/dev/null || true
+    claude plugin marketplace add "https://github.com/$source" 2>/dev/null || true
     if ! claude plugin install "$name" --scope user; then
       log_warn "$name install failed — see error above."
       add_install_failure "$name"
@@ -216,7 +216,7 @@ process.stdin.on('end', () => {
   while IFS='|' read -r repo name; do
     [[ -z "$repo" ]] && continue
     log_info "Registering marketplace: $repo"
-    claude plugin marketplace add "$repo" --scope user 2>/dev/null || true
+    claude plugin marketplace add "$repo" 2>/dev/null || true
     if [[ -n "$name" ]]; then
       claude plugin marketplace update "$name" 2>/dev/null \
         || log_warn "Could not update marketplace $name — domain plugins may fail."
@@ -785,6 +785,31 @@ main() {
     copy_claude_md "$domain" "$project_type"
   fi
   install_graphify
+
+  # --- Embedded-specific: detect Windows toolchains/flashers via powershell.exe ---
+  # Even in hybrid mode the user's toolchains live on Windows; calling powershell.exe
+  # gives the detection script native registry + Program Files access.
+  if [[ "$domain" == "embedded" ]]; then
+    local detect_script_unix="$SCRIPT_DIR/scripts/detect-embedded-toolchain.ps1"
+    if [[ -f "$detect_script_unix" ]]; then
+      if is_windows_claude_hybrid && has_windows_interop; then
+        local detect_script_win target_home_win
+        detect_script_win=$(wslpath -w "$detect_script_unix")
+        target_home_win=$(wslpath -w "$EFFECTIVE_HOME")
+        log_info "Detecting embedded toolchain and flashing tools (via powershell.exe)..."
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$detect_script_win" -TargetHome "$target_home_win" \
+          || log_warn "Toolchain detection exited non-zero — embedded-toolchain.json may be incomplete."
+      else
+        log_warn "Skipping toolchain detection: pure-Linux embedded detection not yet implemented."
+        add_skipped_step \
+          "Embedded toolchain detection (~/.claude/embedded-toolchain.json)" \
+          "Only Windows-side detection is implemented; pure-Linux embedded host detected" \
+          "Run manually: pwsh -File '$detect_script_unix' -TargetHome '$EFFECTIVE_HOME'   (requires PowerShell + Windows toolchains)"
+      fi
+    else
+      log_warn "Toolchain detection script not found at $detect_script_unix"
+    fi
+  fi
 
   # --- WSL-specific caveats ---
   if is_wsl && [[ "$domain" == "web" ]]; then

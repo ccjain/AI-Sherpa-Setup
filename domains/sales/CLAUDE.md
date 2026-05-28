@@ -47,3 +47,11 @@ Do not generate customer-facing materials without knowing the account context.
 
 Effective: drafting outreach, building talk tracks, summarizing account history, generating proposal structures, pipeline analysis
 Not suitable as final authority: pricing decisions, contract terms, forecast commits, deal qualification judgment
+
+---
+
+## Bundled Stack Skills
+
+The globally installed `fullstack-dev-skills` plugin includes a **Salesforce
+development** skill that auto-activates when working with Salesforce code or
+configuration. No additional install is needed.

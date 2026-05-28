@@ -112,7 +112,8 @@ function Install-Plugin {
             Add-InstallFailure "$($Entry.name)@$($Entry.marketplace)"
         }
     } elseif ($Entry.github) {
-        claude plugin marketplace add "https://github.com/$($Entry.github)" --scope user 2>$null
+        try { & claude plugin marketplace add "https://github.com/$($Entry.github)" 2>&1 | Out-Null } catch {}
+        $global:LASTEXITCODE = 0
         claude plugin install $Entry.name --scope user
         if ($LASTEXITCODE -ne 0) {
             Write-Warn "$($Entry.name) install failed - see error above."
@@ -147,10 +148,14 @@ function Register-Marketplaces {
         if (-not $repo) { continue }
         if (-not $needed.Contains($name)) { continue }
         Write-Info "Registering marketplace: $repo"
-        claude plugin marketplace add $repo --scope user 2>$null
+        try { & claude plugin marketplace add $repo 2>&1 | Out-Null } catch {}
+        $global:LASTEXITCODE = 0
         if ($name) {
-            claude plugin marketplace update $name 2>$null
-            if ($LASTEXITCODE -ne 0) { Write-Warn "Could not update marketplace $name - domain plugins may fail." }
+            try { & claude plugin marketplace update $name 2>&1 | Out-Null } catch {}
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "Could not update marketplace $name - domain plugins may fail."
+                $global:LASTEXITCODE = 0
+            }
         }
     }
 }
@@ -487,6 +492,21 @@ Install-CoreSkills
 Install-DomainSkills $domain
 Install-Skills -Domain $domain
 Write-GlobalSettings
+
+# Embedded-specific: probe for toolchains, flashers, debuggers and record them
+# so Claude can issue concrete build/flash/debug commands instead of generic prose.
+if ($domain -eq "embedded") {
+    $detectScript = "$ScriptDir\scripts\detect-embedded-toolchain.ps1"
+    if (Test-Path $detectScript) {
+        Write-Info "Detecting embedded toolchain and flashing tools..."
+        & $detectScript -TargetHome $env:USERPROFILE
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Toolchain detection script exited non-zero. embedded-toolchain.json may be incomplete."
+        }
+    } else {
+        Write-Warn "Toolchain detection script not found at $detectScript"
+    }
+}
 
 if ($isUserLevelRun) {
     # User-level: write CLAUDE.md to ~/.claude/ — active for all projects

@@ -30,3 +30,12 @@ These rules apply to all data science and ML projects. They extend core/CLAUDE.m
 - Always use `venv` or `poetry` — never install packages globally
 - Pin all package versions in `requirements.txt` or `pyproject.toml`
 - Prefer reproducible random seeds — set `random.seed()`, `np.random.seed()`, `torch.manual_seed()`
+
+---
+
+## Bundled Stack Skills
+
+The globally installed `fullstack-dev-skills` plugin includes skills for **pandas**,
+**Spark**, **Postgres**, **RAG systems**, and **model fine-tuning** that auto-activate
+when working with those technologies. No additional install is needed. Mention the
+stack explicitly in your prompt if a skill isn't activating when you expect it to.
