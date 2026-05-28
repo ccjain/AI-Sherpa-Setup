@@ -177,61 +177,111 @@ function Clear-ExternalPluginClones {
     $script:ExternalPluginClones = @{}
 }
 
-# Returns @{ Skills = N; Status = 'ok'|... } describing a plugin's contents.
-function Get-PluginSkillCount {
+# Helpers to construct GitHub URLs from a (repo, ref, path) tuple.
+# Use 'HEAD' so links always resolve to the default branch (main or master).
+function Get-GitHubTreeUrl {
+    param([string]$Repo, [string]$Ref = 'HEAD', [string]$Path = '')
+    $base = "https://github.com/$Repo"
+    if (-not $Path) { return "$base/tree/$Ref" }
+    $clean = $Path -replace '^\./', '' -replace '\\', '/' -replace '^/+', ''
+    return "$base/tree/$Ref/$clean"
+}
+function Get-GitHubBlobUrl {
+    param([string]$Repo, [string]$Ref = 'HEAD', [string]$Path = '')
+    $base = "https://github.com/$Repo"
+    $clean = $Path -replace '^\./', '' -replace '\\', '/' -replace '^/+', ''
+    return "$base/blob/$Ref/$clean"
+}
+
+# Escape a string for safe inclusion as a markdown table cell.
+function Escape-MdCell {
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    return ($Text -replace '\|', '\|' -replace '\r?\n', ' ').Trim()
+}
+
+# Returns @{ Status; Skills = @(@{Name; Description; Url}, ...); SourceUrl }
+# Walks the plugin's source directory, parses each SKILL.md, and produces a
+# GitHub URL for every skill plus a URL for the plugin's source dir.
+function Get-PluginDetails {
     param([string]$PluginName, [string]$MarketplaceName)
     $mp = Get-MarketplaceClone $MarketplaceName
-    if (-not $mp.Path) { return @{ Skills = -1; Status = $mp.Reason } }
+    if (-not $mp.Path) { return @{ Status = $mp.Reason; Skills = @(); SourceUrl = $null } }
+
     $mpJson = Join-Path $mp.Path '.claude-plugin/marketplace.json'
-    if (-not (Test-Path $mpJson)) { return @{ Skills = -1; Status = 'no-marketplace-json' } }
+    if (-not (Test-Path $mpJson)) { return @{ Status = 'no-marketplace-json'; Skills = @(); SourceUrl = $null } }
     try {
         $mpData = ConvertFrom-JsonCaseSafe (Get-Content $mpJson -Raw)
     } catch {
-        return @{ Skills = -1; Status = 'parse-error' }
+        return @{ Status = 'parse-error'; Skills = @(); SourceUrl = $null }
     }
     $plugins = $mpData['plugins']
-    if (-not $plugins) { return @{ Skills = -1; Status = 'no-plugins-array' } }
+    if (-not $plugins) { return @{ Status = 'no-plugins-array'; Skills = @(); SourceUrl = $null } }
     $found = $null
     foreach ($p in @($plugins)) {
         if ($p['name'] -eq $PluginName) { $found = $p; break }
     }
-    if (-not $found) { return @{ Skills = -1; Status = 'plugin-not-found' } }
+    if (-not $found) { return @{ Status = 'plugin-not-found'; Skills = @(); SourceUrl = $null } }
 
-    # Resolve the plugin's source directory. Two shapes seen in the wild:
-    #   1. source as a string => relative path inside the marketplace repo
-    #   2. source as an object { source: "url"|"github", url: "...", sha: "..." }
-    #      => external repo, must be cloned separately. This is how the
-    #      official `claude-plugins-official` marketplace points at plugins.
+    # Two source shapes (same as before):
+    #   1. string => relative path inside the marketplace repo
+    #   2. object { url, sha } => external repo, must be cloned separately
     $source = $found['source']
     $srcDir = $null
+    $sourceUrl = $null
+    $skillRepo = $null  # the repo to use when building per-skill URLs
+    $skillRef  = 'HEAD'
+
+    $mpRepo = Get-MarketplaceRepo $MarketplaceName
+    $defaultSubpath = "plugins/$PluginName"
+
     if (-not $source) {
-        $srcDir = Join-Path $mp.Path "./plugins/$PluginName"
+        $srcDir = Join-Path $mp.Path $defaultSubpath
+        $sourceUrl = Get-GitHubTreeUrl -Repo $mpRepo -Path $defaultSubpath
+        $skillRepo = $mpRepo
     } elseif ($source -is [string]) {
         $srcDir = Join-Path $mp.Path $source
+        $sourceUrl = Get-GitHubTreeUrl -Repo $mpRepo -Path $source
+        $skillRepo = $mpRepo
     } elseif ($source['url']) {
         $extClone = Resolve-ExternalPluginClone $source['url'] $source['sha']
-        if (-not $extClone) { return @{ Skills = -1; Status = 'external-clone-failed' } }
+        if (-not $extClone) { return @{ Status = 'external-clone-failed'; Skills = @(); SourceUrl = $null } }
         $srcDir = $extClone
+        # Derive an owner/repo string from the external URL
+        $extRepo = ($source['url'] -replace '\.git$', '' -replace '^https?://github\.com/', '')
+        $skillRepo = $extRepo
+        if ($source['sha']) { $skillRef = $source['sha'] }
+        $sourceUrl = Get-GitHubTreeUrl -Repo $extRepo -Ref $skillRef
     } else {
-        return @{ Skills = -1; Status = 'unknown-source-shape' }
+        return @{ Status = 'unknown-source-shape'; Skills = @(); SourceUrl = $null }
     }
 
-    if (-not (Test-Path $srcDir)) { return @{ Skills = -1; Status = 'no-source-dir' } }
-    $count = (Get-ChildItem -Path $srcDir -Filter 'SKILL.md' -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
-    return @{ Skills = $count; Status = 'ok' }
-}
+    if (-not (Test-Path $srcDir)) { return @{ Status = 'no-source-dir'; Skills = @(); SourceUrl = $sourceUrl } }
 
-# Render the suffix appended to a plugin's bullet line.
-function Format-PluginCount {
-    param([string]$PluginName, [string]$MarketplaceName)
-    $info = Get-PluginSkillCount $PluginName $MarketplaceName
-    if ($info.Status -eq 'ok') {
-        $n = $info.Skills
-        $s = if ($n -eq 1) { 'skill' } else { 'skills' }
-        return "$n $s"
-    } else {
-        return "skill count unavailable ($($info.Status))"
+    $skills = @()
+    $srcDirFull = (Get-Item $srcDir).FullName
+    $skillFiles = Get-ChildItem -Path $srcDir -Filter 'SKILL.md' -Recurse -File -ErrorAction SilentlyContinue
+    foreach ($f in $skillFiles | Sort-Object FullName) {
+        $parsed = Read-SkillMd $f.FullName
+        if (-not $parsed) { continue }
+        # Build a path relative to either the plugin source dir (for in-marketplace
+        # plugins) or the external clone root (for { url, sha } plugins).
+        $relToSrc = $f.FullName.Substring($srcDirFull.Length).TrimStart('\','/')
+        $pathForUrl = if ($source -is [string]) {
+            (($source -replace '^\./', '') + '/' + ($relToSrc -replace '\\', '/'))
+        } elseif (-not $source) {
+            "$defaultSubpath/" + ($relToSrc -replace '\\', '/')
+        } else {
+            ($relToSrc -replace '\\', '/')
+        }
+        $url = Get-GitHubBlobUrl -Repo $skillRepo -Ref $skillRef -Path $pathForUrl
+        $skills += [pscustomobject]@{
+            Name        = $parsed.Name
+            Description = $parsed.Description
+            Url         = $url
+        }
     }
+    return @{ Status = 'ok'; Skills = $skills; SourceUrl = $sourceUrl }
 }
 
 # Clean up cached marketplace clones once the whole inventory has been built.
@@ -277,15 +327,25 @@ function Resolve-SkillEntries {
                 continue
             }
             # Find every SKILL.md (case-insensitive) anywhere under srcDir
+            $srcDirFull = (Get-Item $srcDir).FullName
             $skillFiles = Get-ChildItem -Path $srcDir -Filter "SKILL.md" -Recurse -File
             foreach ($f in $skillFiles | Sort-Object FullName) {
                 $parsed = Read-SkillMd $f.FullName
                 if ($parsed) {
+                    $relToSrc = $f.FullName.Substring($srcDirFull.Length).TrimStart('\','/')
+                    $cleanSubpath = $subpath -replace '^\./', ''
+                    $pathForUrl = if ($cleanSubpath -eq '.') {
+                        ($relToSrc -replace '\\', '/')
+                    } else {
+                        "$cleanSubpath/" + ($relToSrc -replace '\\', '/')
+                    }
+                    $url = Get-GitHubBlobUrl -Repo $repo -Path $pathForUrl
                     $results += [pscustomobject]@{
                         Name        = $parsed.Name
                         Description = $parsed.Description
                         Repo        = $repo
                         Subpath     = $subpath
+                        Url         = $url
                     }
                 }
             }
@@ -308,8 +368,105 @@ Append "> Re-run the script when ``plugins.json`` changes."
 Append ""
 Append "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm') UTC$([TimeZoneInfo]::Local.GetUtcOffset((Get-Date)).Hours.ToString('+00;-00'))"
 Append ""
+Append "Each plugin entry below links to its source on GitHub. Expand the"
+Append "**Skills inside** block to see every individual SKILL.md the plugin"
+Append "ships, with a direct link to each file."
+Append ""
 Append "---"
 Append ""
+
+# --- helpers for table rendering ---
+function Render-PluginsTable {
+    param([array]$Plugins)
+    if (-not $Plugins -or @($Plugins).Count -eq 0) {
+        Append "_(none)_"
+        return
+    }
+
+    # First pass: gather details for every plugin so we can render the
+    # summary table and the per-plugin detail blocks below it.
+    $rows = @()
+    foreach ($p in $Plugins) {
+        $info = Get-PluginDetails $p.name $p.marketplace
+        $rows += [pscustomobject]@{
+            Name        = $p.name
+            Marketplace = $p.marketplace
+            Info        = $info
+        }
+    }
+
+    # Summary table
+    Append "| Plugin | Marketplace | Skills | Source |"
+    Append "|---|---|---|---|"
+    foreach ($r in $rows) {
+        $count = @($r.Info.Skills).Count
+        $srcCell = if ($r.Info.SourceUrl) { "[link]($($r.Info.SourceUrl))" } else { "_unavailable_" }
+        $countCell = if ($r.Info.Status -eq 'ok') { "$count" } else { "_$($r.Info.Status)_" }
+        Append "| ``$($r.Name)`` | ``$($r.Marketplace)`` | $countCell | $srcCell |"
+    }
+    Append ""
+
+    # Per-plugin skill detail (collapsible)
+    foreach ($r in $rows) {
+        $skills = @($r.Info.Skills)
+        if ($skills.Count -eq 0) { continue }
+        Append "<details><summary><strong>Skills inside <code>$($r.Name)</code></strong> ($($skills.Count))</summary>"
+        Append ""
+        Append "| Skill | Description | Source |"
+        Append "|---|---|---|"
+        foreach ($s in $skills) {
+            $desc = Escape-MdCell $s.Description
+            Append "| ``$($s.Name)`` | $desc | [SKILL.md]($($s.Url)) |"
+        }
+        Append ""
+        Append "</details>"
+        Append ""
+    }
+}
+
+function Render-SkillsTable {
+    param([array]$SkillEntries)
+    if (-not $SkillEntries -or @($SkillEntries).Count -eq 0) {
+        Append "_(none)_"
+        return
+    }
+
+    Write-Info "Resolving skill entries..."
+    $resolved = Resolve-SkillEntries $SkillEntries
+    $resolved = @($resolved)
+    if ($resolved.Count -eq 0) { Append "_(none)_"; return }
+
+    $repoCount = @($resolved | Group-Object Repo).Count
+    Append "**$($resolved.Count) skills from $repoCount repo(s):**"
+    Append ""
+
+    # Per-repo summary table
+    Append "| Repo | Subpath | Skill count | Source |"
+    Append "|---|---|---|---|"
+    foreach ($g in ($resolved | Group-Object Repo)) {
+        $subpath = $g.Group[0].Subpath
+        $treeUrl = Get-GitHubTreeUrl -Repo $g.Name -Path $subpath
+        Append "| ``$($g.Name)`` | ``$subpath`` | $(@($g.Group).Count) | [link]($treeUrl) |"
+    }
+    Append ""
+
+    # Per-repo skill detail (collapsible)
+    foreach ($g in ($resolved | Group-Object Repo)) {
+        $skills = @($g.Group)
+        Append "<details><summary><strong>Skills from <code>$($g.Name)</code></strong> ($($skills.Count))</summary>"
+        Append ""
+        Append "| Skill | Description | Source |"
+        Append "|---|---|---|"
+        foreach ($s in $skills) {
+            $desc = Escape-MdCell $s.Description
+            $srcCell = if ($s.Url) { "[SKILL.md]($($s.Url))" } else { '-' }
+            Append "| ``$($s.Name)`` | $desc | $srcCell |"
+        }
+        Append ""
+        Append "</details>"
+        Append ""
+    }
+}
 
 # Global section
 Append "## Global (installed for every domain)"
@@ -317,29 +474,12 @@ Append ""
 
 Append "### Plugins"
 Append ""
-if ($config.global -and @($config.global).Count -gt 0) {
-    foreach ($p in $config.global) {
-        $countLabel = Format-PluginCount $p.name $p.marketplace
-        Append "- ``$($p.name)`` @ ``$($p.marketplace)`` - $countLabel"
-    }
-} else {
-    Append "_(none)_"
-}
-Append ""
+Render-PluginsTable $config.global
 
 Append "### Skills"
 Append ""
-if ($config.skills -and $config.skills.global -and @($config.skills.global).Count -gt 0) {
-    Write-Info "Resolving global skills..."
-    $globalSkills = Resolve-SkillEntries $config.skills.global
-    foreach ($repo in ($globalSkills | Group-Object Repo)) {
-        Append "**From ``$($repo.Name)`` (subpath: ``$($repo.Group[0].Subpath)``):**"
-        Append ""
-        foreach ($s in $repo.Group) {
-            Append "- ``$($s.Name)`` - $($s.Description)"
-        }
-        Append ""
-    }
+if ($config.skills -and $config.skills.global) {
+    Render-SkillsTable $config.skills.global
 } else {
     Append "_(none)_"
 }
@@ -355,7 +495,6 @@ foreach ($domain in $domainNames) {
     Append "## Domain: $domain"
     Append ""
 
-    # Plugins for this domain
     Append "### Plugins"
     Append ""
     $domainPlugins = $null
@@ -363,16 +502,12 @@ foreach ($domain in $domainNames) {
         $domainPlugins = $config.domains.$domain
     }
     if ($domainPlugins -and @($domainPlugins).Count -gt 0) {
-        foreach ($p in $domainPlugins) {
-            $countLabel = Format-PluginCount $p.name $p.marketplace
-            Append "- ``$($p.name)`` @ ``$($p.marketplace)`` - $countLabel"
-        }
+        Render-PluginsTable $domainPlugins
     } else {
         Append "_(none - domain relies on global plugins + CLAUDE.md rules)_"
+        Append ""
     }
-    Append ""
 
-    # Skills for this domain
     Append "### Skills"
     Append ""
     $domainSkills = $null
@@ -380,24 +515,11 @@ foreach ($domain in $domainNames) {
         $domainSkills = $config.skills.$domain
     }
     if ($domainSkills -and @($domainSkills).Count -gt 0) {
-        Write-Info "Resolving skills for domain: $domain..."
-        $resolved = Resolve-SkillEntries $domainSkills
-        $totalCount = @($resolved).Count
-        $repoCount = @($resolved | Group-Object Repo).Count
-        Append "**$totalCount skills from $repoCount repo(s):**"
-        Append ""
-        foreach ($repoGroup in ($resolved | Group-Object Repo)) {
-            Append "**From ``$($repoGroup.Name)`` (subpath: ``$($repoGroup.Group[0].Subpath)``):**"
-            Append ""
-            foreach ($s in $repoGroup.Group) {
-                Append "- ``$($s.Name)`` - $($s.Description)"
-            }
-            Append ""
-        }
+        Render-SkillsTable $domainSkills
     } else {
         Append "_(none)_"
+        Append ""
     }
-    Append ""
 }
 
 # Write file
