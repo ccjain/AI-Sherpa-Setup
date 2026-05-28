@@ -210,7 +210,7 @@ function Install-Skills {
         $tmp = Join-Path $env:TEMP "ai-sherpa-skill-$repoSlug"
         if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
         Write-Info "Cloning skills from $repo..."
-        git clone --depth 1 "https://github.com/$repo" $tmp 2>&1 | Out-Null
+        git clone --depth 1 --quiet "https://github.com/$repo" $tmp | Out-Null
         if ($LASTEXITCODE -ne 0) {
             Write-Warn "Failed to clone $repo - skipping its skills."
             if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
@@ -455,7 +455,8 @@ $isUserLevelRun = ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath 
 
 $domainMap = @{
     "1"="embedded"; "2"="web"; "3"="data"; "4"="devops";
-    "5"="marketing"; "6"="sales"; "7"="finance"; "8"="service"; "9"="procurement"
+    "5"="marketing"; "6"="sales"; "7"="finance"; "8"="service"; "9"="procurement";
+    "10"="ai"; "11"="frontend"
 }
 
 # Prerequisites (both paths)
@@ -478,8 +479,11 @@ Write-Host "  [6] Sales"
 Write-Host "  [7] Finance / Accounting"
 Write-Host "  [8] Customer Service / Support"
 Write-Host "  [9] Procurement / Operations"
+Write-Host "  --- AI & UI/UX ---"
+Write-Host "  [10] AI / ML Agents (RAG, evals, prompt engineering)"
+Write-Host "  [11] Frontend + UI/UX"
 Write-Host ""
-$domainChoice = Read-Host "Enter number [1-9]"
+$domainChoice = Read-Host "Enter number [1-11]"
 if (-not $domainMap.ContainsKey($domainChoice)) {
     Write-Err "Invalid choice: $domainChoice. Run setup.bat again."
     exit 1

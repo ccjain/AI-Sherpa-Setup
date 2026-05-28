@@ -149,6 +149,8 @@ same Graphify.
 | 7 | Finance / Accounting | Month-end, financial analysis, statements |
 | 8 | Customer Service / Support | Tickets, escalation, knowledge base |
 | 9 | Procurement / Operations | Sourcing, vendors, workflows |
+| 10 | AI / ML Agents | RAG, evals, prompt engineering, agent loops, Anthropic SDK |
+| 11 | Frontend + UI/UX | Component libraries, design systems, accessibility, Core Web Vitals |
 
 Stack-specific plugins (React, Vue, Django, FastAPI, Kubernetes, Terraform, Salesforce, etc.)
 are bundled inside `fullstack-dev-skills` as **skills**, not separate plugins. They auto-activate
