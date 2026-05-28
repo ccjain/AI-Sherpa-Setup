@@ -14,7 +14,6 @@
       { "name": "antigravity-bundle-systems-programming", "marketplace": "antigravity-awesome-skills" }
     ],
     "web": [
-      { "name": "playwright",      "marketplace": "claude-plugins-official" },
       { "name": "figma",           "marketplace": "claude-plugins-official" },
       { "name": "frontend-design", "marketplace": "claude-plugins-official" },
       { "name": "vercel",          "marketplace": "claude-plugins-official" }
@@ -38,6 +37,10 @@
     "global": [],
     "embedded": [
       { "repo": "beriberikix/zephyr-agent-skills", "subpath": "skills" }
+    ],
+    "web": [
+      { "repo": "addyosmani/web-quality-skills", "subpath": "skills" },
+      { "repo": "bitjaru/styleseed",             "subpath": "engine/.claude/skills" }
     ]
   }
 }

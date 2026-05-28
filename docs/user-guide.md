@@ -238,6 +238,18 @@ After picking domain **1** (Embedded):
 
 All of these auto-activate on relevant prompts; none need a slash command.
 
+### 6.5 Web domain — what you get
+
+After picking domain **2** (Web):
+
+| Source | Type | Contents |
+|---|---|---|
+| `figma`, `frontend-design`, `vercel` plugins (from `claude-plugins-official`) | plugins | Design tooling, frontend-design guidance, Vercel deployment workflow |
+| `addyosmani/web-quality-skills` | raw skills | Lighthouse / Core Web Vitals / accessibility / SEO / best-practices — Agent Skills from Addy Osmani (Google Chrome team) |
+| `bitjaru/styleseed` | raw skills | 69 design rules + 48 shadcn components + brand skins (Toss / Stripe / Linear / Vercel / Notion) on Tailwind v4 + Radix |
+
+The `fullstack-dev-skills` global bundle still applies on top — React, Vue, Next.js, TypeScript, etc. auto-activate as usual.
+
 ---
 
 ## 7. Verifying The Install
