@@ -43,8 +43,19 @@
       { "name": "ui-design",                    "marketplace": "claude-code-workflows" },
       { "name": "application-performance",      "marketplace": "claude-code-workflows" }
     ],
-    "marketing":   [{ "name": "marketing",        "marketplace": "knowledge-work-plugins" }],
-    "sales":       [{ "name": "sales",            "marketplace": "knowledge-work-plugins" }],
+    "marketing": [
+      { "name": "marketing",            "marketplace": "knowledge-work-plugins" },
+      { "name": "brand-voice",          "marketplace": "knowledge-work-plugins" },
+      { "name": "searchfit-seo",        "marketplace": "knowledge-work-plugins" },
+      { "name": "content-marketing",    "marketplace": "claude-code-workflows"  },
+      { "name": "seo-content-creation", "marketplace": "claude-code-workflows"  }
+    ],
+    "sales": [
+      { "name": "sales",                     "marketplace": "knowledge-work-plugins" },
+      { "name": "apollo",                    "marketplace": "knowledge-work-plugins" },
+      { "name": "common-room",               "marketplace": "knowledge-work-plugins" },
+      { "name": "customer-sales-automation", "marketplace": "claude-code-workflows"  }
+    ],
     "finance": [
       { "name": "finance",            "marketplace": "knowledge-work-plugins"        },
       { "name": "financial-analysis", "marketplace": "claude-for-financial-services" },
