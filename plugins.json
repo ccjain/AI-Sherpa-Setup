@@ -3,7 +3,9 @@
     { "repo": "anthropics/knowledge-work-plugins",  "name": "knowledge-work-plugins"        },
     { "repo": "anthropics/financial-services",      "name": "claude-for-financial-services" },
     { "repo": "jeffallan/claude-skills",            "name": "fullstack-dev-skills"          },
-    { "repo": "sickn33/antigravity-awesome-skills", "name": "antigravity-awesome-skills"    }
+    { "repo": "sickn33/antigravity-awesome-skills", "name": "antigravity-awesome-skills"    },
+    { "repo": "anthropics/skills",                  "name": "anthropic-agent-skills"        },
+    { "repo": "wshobson/agents",                    "name": "claude-code-workflows"         }
   ],
   "global": [
     { "name": "superpowers",          "marketplace": "claude-plugins-official" },
@@ -18,10 +20,29 @@
       { "name": "frontend-design", "marketplace": "claude-plugins-official" },
       { "name": "vercel",          "marketplace": "claude-plugins-official" }
     ],
-    "data":     [],
-    "devops":   [],
-    "ai":       [],
-    "frontend": [],
+    "data": [
+      { "name": "data-engineering",             "marketplace": "claude-code-workflows" },
+      { "name": "database-design",              "marketplace": "claude-code-workflows" },
+      { "name": "database-cloud-optimization",  "marketplace": "claude-code-workflows" }
+    ],
+    "devops": [
+      { "name": "cloud-infrastructure",         "marketplace": "claude-code-workflows" },
+      { "name": "kubernetes-operations",        "marketplace": "claude-code-workflows" },
+      { "name": "cicd-automation",              "marketplace": "claude-code-workflows" },
+      { "name": "incident-response",            "marketplace": "claude-code-workflows" },
+      { "name": "observability-monitoring",     "marketplace": "claude-code-workflows" }
+    ],
+    "ai": [
+      { "name": "claude-api",                   "marketplace": "anthropic-agent-skills" },
+      { "name": "llm-application-dev",          "marketplace": "claude-code-workflows" },
+      { "name": "agent-orchestration",          "marketplace": "claude-code-workflows" },
+      { "name": "machine-learning-ops",         "marketplace": "claude-code-workflows" }
+    ],
+    "frontend": [
+      { "name": "accessibility-compliance",     "marketplace": "claude-code-workflows" },
+      { "name": "ui-design",                    "marketplace": "claude-code-workflows" },
+      { "name": "application-performance",      "marketplace": "claude-code-workflows" }
+    ],
     "marketing":   [{ "name": "marketing",        "marketplace": "knowledge-work-plugins" }],
     "sales":       [{ "name": "sales",            "marketplace": "knowledge-work-plugins" }],
     "finance": [
