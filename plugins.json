@@ -71,6 +71,27 @@
     "service":     [{ "name": "customer-support", "marketplace": "knowledge-work-plugins" }],
     "procurement": [{ "name": "operations",       "marketplace": "knowledge-work-plugins" }]
   },
+  "tools": {
+    "global": [
+      {
+        "name": "code-review-graph",
+        "source": "pypi",
+        "package": "code-review-graph",
+        "postInstall": "code-review-graph install"
+      },
+      {
+        "name": "rtk",
+        "source": "cargo",
+        "git": "https://github.com/rtk-ai/rtk"
+      },
+      {
+        "name": "claude-usage",
+        "source": "git-clone",
+        "repo": "phuryn/claude-usage",
+        "destination": "~/.claude/tools/claude-usage"
+      }
+    ]
+  },
   "skills": {
     "global": [],
     "embedded": [

@@ -314,37 +314,120 @@ function Install-Python {
     return $true
 }
 
-function Install-CodeReviewGraph {
+function Install-PyPiTool {
+    param([string]$Name, [string]$Package, [string]$PostInstall)
     $pipCmd = Resolve-PipCommand
     if (-not $pipCmd) {
         if (-not (Install-Python)) { return }
         $pipCmd = Resolve-PipCommand
         if (-not $pipCmd) {
             Write-Warn "Python installed but pip is not yet on PATH."
-            Add-SkippedStep -Name "code-review-graph (auto-mode code review indexing)" `
+            Add-SkippedStep -Name "$Name (PyPI tool)" `
                             -Reason "Python installed but pip not yet on PATH in this shell" `
                             -ManualInstall "Close and reopen the terminal, then re-run setup.bat"
             return
         }
     }
-    Write-Info "Installing code-review-graph (Tree-sitter code intelligence)..."
-    & $pipCmd install --quiet code-review-graph
+    Write-Info "Installing $Name (pip)..."
+    & $pipCmd install --quiet $Package
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "code-review-graph pip install failed (exit $LASTEXITCODE)."
-        Add-SkippedStep -Name "code-review-graph (auto-mode code review indexing)" `
-                        -Reason "pip install code-review-graph failed (exit $LASTEXITCODE)" `
-                        -ManualInstall "$pipCmd install code-review-graph; code-review-graph install"
+        Write-Warn "$Name pip install failed (exit $LASTEXITCODE)."
+        Add-SkippedStep -Name "$Name (PyPI tool)" `
+                        -Reason "pip install $Package failed (exit $LASTEXITCODE)" `
+                        -ManualInstall "$pipCmd install $Package$(if ($PostInstall) { '; ' + $PostInstall })"
         return
     }
-    code-review-graph install
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warn "code-review-graph install (MCP / platform registration) failed."
-        Add-SkippedStep -Name "code-review-graph (auto-mode code review indexing)" `
-                        -Reason "code-review-graph install command failed (exit $LASTEXITCODE)" `
-                        -ManualInstall "code-review-graph install"
+    if ($PostInstall) {
+        Invoke-Expression $PostInstall
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "$Name post-install command failed."
+            Add-SkippedStep -Name "$Name (PyPI tool)" `
+                            -Reason "Post-install command failed: $PostInstall" `
+                            -ManualInstall $PostInstall
+            return
+        }
+    }
+    Write-Info "$Name ready."
+}
+
+function Install-CargoTool {
+    param([string]$Name, [string]$Git, [string]$Package)
+    if (-not (Test-CommandExists "cargo")) {
+        Write-Warn "cargo not on PATH - cannot install $Name."
+        Add-SkippedStep -Name "$Name (Rust / cargo tool)" `
+                        -Reason "cargo not installed" `
+                        -ManualInstall "Install Rust from https://rustup.rs, then: cargo install --git $Git"
+        return
+    }
+    Write-Info "Installing $Name (cargo)..."
+    if ($Git) {
+        & cargo install --git $Git
     } else {
-        Write-Info "code-review-graph ready. Auto-mode runs via SessionStart hook (crg-daemon)."
-        Write-Info "Tip: copy templates\code-review-graphignore into each project root for sensible default excludes."
+        & cargo install $Package
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "$Name cargo install failed (exit $LASTEXITCODE)."
+        Add-SkippedStep -Name "$Name (Rust / cargo tool)" `
+                        -Reason "cargo install failed" `
+                        -ManualInstall "cargo install$(if ($Git) { ' --git ' + $Git } else { ' ' + $Package })"
+        return
+    }
+    Write-Info "$Name ready."
+}
+
+function Install-GitCloneTool {
+    param([string]$Name, [string]$Repo, [string]$Destination, [string]$PostInstall)
+    if (-not (Test-CommandExists "git")) {
+        Write-Warn "git not on PATH - cannot install $Name."
+        Add-SkippedStep -Name "$Name (git-clone tool)" -Reason "git not installed" `
+                        -ManualInstall "Install git, then re-run setup."
+        return
+    }
+    $dest = $Destination -replace '^~', $env:USERPROFILE
+    $parent = Split-Path -Parent $dest
+    if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    if (Test-Path $dest) {
+        Write-Info "$Name already at $dest - pulling latest..."
+        Push-Location $dest
+        & git pull --quiet
+        Pop-Location
+    } else {
+        Write-Info "Cloning $Name from $Repo to $dest..."
+        & git clone --quiet "https://github.com/$Repo" $dest
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "$Name git clone failed."
+            Add-SkippedStep -Name "$Name (git-clone tool)" -Reason "git clone https://github.com/$Repo failed" `
+                            -ManualInstall "git clone https://github.com/$Repo $dest"
+            return
+        }
+    }
+    if ($PostInstall) {
+        Push-Location $dest
+        Invoke-Expression $PostInstall
+        Pop-Location
+    }
+    Write-Info "$Name ready at $dest."
+}
+
+function Install-Tools {
+    param([string]$Domain)
+    $configFile = "$ScriptDir\plugins.json"
+    if (-not (Test-Path $configFile)) { return }
+    try { $config = Get-Content $configFile -Raw | ConvertFrom-Json } catch { return }
+    if (-not $config.tools) { return }
+
+    $entries = @()
+    if ($config.tools.global)            { $entries += @($config.tools.global) }
+    if ($Domain -and $config.tools.$Domain) { $entries += @($config.tools.$Domain) }
+    if ($entries.Count -eq 0) { return }
+
+    foreach ($t in $entries) {
+        switch ($t.source) {
+            'pypi'      { Install-PyPiTool      -Name $t.name -Package $t.package -PostInstall $t.postInstall }
+            'cargo'     { Install-CargoTool     -Name $t.name -Git $t.git -Package $t.package }
+            'git-clone' { Install-GitCloneTool  -Name $t.name -Repo $t.repo -Destination $t.destination -PostInstall $t.postInstall }
+            default     { Write-Warn "Unknown tool source '$($t.source)' for $($t.name); skipping." }
+        }
     }
 }
 
@@ -409,7 +492,7 @@ function Invoke-Update {
     }
     Install-Skills
     Write-GlobalSettings
-    Install-CodeReviewGraph
+    Install-Tools
     Write-Info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
 
@@ -516,7 +599,7 @@ if ($domain -eq "embedded") {
 if ($isUserLevelRun) {
     # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
     Write-GlobalClaudeMd $domain
-    Install-CodeReviewGraph
+    Install-Tools -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing
@@ -543,7 +626,7 @@ if ($isUserLevelRun) {
     $projectType = $ptMap[$projectChoice]
     Write-ProjectSettings
     Copy-ClaudeMd $domain $projectType
-    Install-CodeReviewGraph
+    Install-Tools -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing

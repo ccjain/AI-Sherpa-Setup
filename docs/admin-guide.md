@@ -290,44 +290,116 @@ working example.
 
 ---
 
-## 9. Tools installed outside `plugins.json`
+## 9. The `tools` section — CLI tools alongside plugins
 
-A handful of things land on every machine but are **not** declared in
-`plugins.json`. They install through the setup script's Python path
-instead, because they're CLI tools published on PyPI rather than
-Claude Code marketplace plugins.
+`plugins.json` has a fifth top-level key — `tools` — alongside `marketplaces`,
+`global`, `domains`, and `skills`. It declares CLI tools that get installed
+globally even though they aren't Claude Code marketplace plugins.
 
-### Current entry: `code-review-graph`
+### Why this section exists
 
-| | |
-|---|---|
-| What it is | Tree-sitter code intelligence + MCP server, replaces graphify |
-| Upstream | [tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph) |
-| Install path | `setup.ps1` → `Install-CodeReviewGraph` / `setup.sh` → `install_code_review_graph` |
-| How it's invoked | Auto mode via SessionStart hook in `settings/settings-template.json` (ensures `crg-daemon` is running) |
-| Why not in `plugins.json` | Upstream repo has no `.claude-plugin/marketplace.json`. It's a Python package on PyPI (`pip install code-review-graph`), not a Claude Code marketplace plugin. The two install mechanisms aren't interchangeable. |
+Some tools your team needs aren't Claude plugins (no `.claude-plugin/marketplace.json`):
+they're standalone CLIs (Rust binaries, Python packages, git-cloned scripts).
+You can't install them with `claude plugin install`. They install via `pip`,
+`cargo`, `npm`, or `git clone`. The `tools[]` section lets you declare them
+declaratively in the same config file as plugins.
 
-### When does this migrate into `plugins.json`?
+### Schema
 
-If upstream ever publishes a `.claude-plugin/marketplace.json` (we periodically
-re-check), then:
+```json
+"tools": {
+  "global": [
+    { "name": "<id>", "source": "pypi|cargo|git-clone", ...source-specific fields }
+  ]
+}
+```
 
-1. Add their repo to `plugins.json` → `marketplaces[]`
-2. Add the plugin to `global[]`
-3. Delete `Install-CodeReviewGraph` from setup.ps1 and `install_code_review_graph`
-   from setup.sh
-4. Remove the templates/code-review-graphignore generated-ignore path if the
-   plugin handles it natively
+Source types and the fields each one reads:
 
-Until then, the dual-path setup is intentional, not a bug.
+| `source` | Fields | What it does |
+|---|---|---|
+| `pypi` | `package` (required), `postInstall` (optional) | `pip install <package>` (or `pipx install` on PEP 668 systems), then optionally run `postInstall` |
+| `cargo` | `git` OR `package` | `cargo install --git <git>` or `cargo install <package>`. Requires Rust toolchain on PATH; skipped with a warning if not present. |
+| `git-clone` | `repo` (required), `destination`, `postInstall` | `git clone https://github.com/<repo> <destination>`. `~` in destination is expanded. Pulls latest if dest already exists. |
 
-### Adding more PyPI tools later
+### Current entries
 
-If we want to install another Python CLI (e.g. `pyright`, `black`, a project-
-specific linter), follow the `Install-CodeReviewGraph` shape — one function per
-tool, called from the main setup flow. We deliberately did **not** generalize
-this into a `tools[]` schema in `plugins.json` because the population is small
-and unlikely to grow fast. Revisit if the count gets above ~3.
+```json
+"tools": {
+  "global": [
+    {
+      "name": "code-review-graph",
+      "source": "pypi",
+      "package": "code-review-graph",
+      "postInstall": "code-review-graph install"
+    },
+    {
+      "name": "rtk",
+      "source": "cargo",
+      "git": "https://github.com/rtk-ai/rtk"
+    },
+    {
+      "name": "claude-usage",
+      "source": "git-clone",
+      "repo": "phuryn/claude-usage",
+      "destination": "~/.claude/tools/claude-usage"
+    }
+  ]
+}
+```
+
+| Tool | What it does | Auto-mode |
+|---|---|---|
+| `code-review-graph` | Tree-sitter code intelligence + MCP server, replaces graphify | Yes — via SessionStart hook (`crg-daemon`) |
+| `rtk` | Token-compression shell wrapper from rtk-ai (Apache-2.0). 60–90% token savings on large CLI output. | No — runs transparently when in PATH |
+| `claude-usage` | Local dashboard for Claude session log analysis (MIT). Reads `~/.claude/projects/*/session.jsonl`. | No — run manually: `python ~/.claude/tools/claude-usage/cli.py dashboard` |
+
+### How it's wired
+
+`setup.ps1` → `Install-Tools` and `setup.sh` → `install_tools` read the
+`tools.global[]` (always) and `tools.<picked-domain>[]` (when domain is
+specified) entries from `plugins.json` and dispatch by `source` to:
+- `Install-PyPiTool` / `install_pypi_tool`
+- `Install-CargoTool` / `install_cargo_tool`
+- `Install-GitCloneTool` / `install_git_clone_tool`
+
+In WSL+Windows hybrid mode, PyPI tools install on the Windows side via
+`powershell.exe` interop (`install_pypi_tool_windows_side`). Cargo and
+git-clone tools install on the WSL side (lives in `~/.claude/tools/`).
+
+### Adding a new tool
+
+To add e.g. a new Python CLI for everyone:
+
+```json
+"tools": {
+  "global": [
+    {
+      "name": "pyright",
+      "source": "pypi",
+      "package": "pyright"
+    }
+  ]
+}
+```
+
+No setup script changes needed. Re-run setup (or `--update`) on each machine.
+
+### What `tools` is NOT
+
+- Not a substitute for plugins. If a tool ships a `.claude-plugin/marketplace.json`,
+  declare it under `marketplaces[]` + `global[]` (or `domains.<x>[]`) instead.
+  That's a real Claude plugin and benefits from `claude plugin update`,
+  uninstall, etc.
+- Not a substitute for raw skills. Skills with `SKILL.md` frontmatter that
+  Claude can auto-activate go under `skills.<domain>[]`.
+
+### When a tool's upstream publishes a real Claude marketplace
+
+Migrate it out of `tools[]` into `marketplaces[]` + the appropriate domain.
+Delete the `tools[]` entry and the related `templates/<tool>-ignore` if any.
+Marketplace-published plugins are always preferable to CLI shims when the
+choice exists.
 
 ---
 

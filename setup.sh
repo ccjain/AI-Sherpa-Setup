@@ -398,17 +398,21 @@ has_windows_interop() {
   command -v powershell.exe >/dev/null 2>&1
 }
 
-install_code_review_graph_windows_side() {
+install_pypi_tool_windows_side() {
+  # args: name | package | postInstall
+  local name="$1" package="$2" post_install="$3"
+  local exe_name="${package}.exe"
+
   if ! has_windows_interop; then
     log_warn "Windows interop (powershell.exe) not available from this WSL distro."
     add_skipped_step \
-      "code-review-graph (auto-mode code review indexing)" \
+      "$name (PyPI tool, WSL+Windows hybrid)" \
       "Hybrid mode requires Windows interop, which is disabled in this WSL distro" \
-      "From Windows PowerShell: winget install Python.Python.3.12 ; py -m pip install code-review-graph ; code-review-graph install"
+      "From Windows PowerShell: winget install Python.Python.3.12 ; py -m pip install $package${post_install:+ ; $post_install}"
     return 1
   fi
 
-  log_info "Installing code-review-graph on Windows (via powershell.exe from WSL)..."
+  log_info "Installing $name on Windows (via powershell.exe from WSL)..."
 
   # Find a working Windows pip invocation. Order:
   #   1. pip              - direct, if pip.exe is on PATH
@@ -434,79 +438,77 @@ install_code_review_graph_windows_side() {
     powershell.exe -NoProfile -Command 'winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements' || true
     pip_cmd=$(find_windows_pip)
     if [[ -z "$pip_cmd" ]]; then
-      log_warn "Could not find a working Windows pip after install attempt."
-      add_skipped_step \
-        "code-review-graph (auto-mode code review indexing)" \
-        "Windows Python may be installed but pip is not reachable (often: Microsoft Store python stub intercepts python.exe, and py.exe / pip.exe are not on PATH)" \
-        "From Windows PowerShell: py -m pip install code-review-graph ; code-review-graph install   (or install Python from https://python.org with 'Add to PATH' checked)"
+      add_skipped_step "$name (PyPI tool, WSL+Windows hybrid)" \
+        "Windows Python may be installed but pip is not reachable" \
+        "From Windows PowerShell: py -m pip install $package${post_install:+ ; $post_install}"
       return 1
     fi
   fi
 
-  log_info "Installing code-review-graph on Windows (using: $pip_cmd)..."
-  if ! powershell.exe -NoProfile -Command "$pip_cmd install --quiet code-review-graph"; then
-    log_warn "Windows pip install code-review-graph failed."
-    add_skipped_step \
-      "code-review-graph (auto-mode code review indexing)" \
-      "Windows pip install code-review-graph failed (using: $pip_cmd)" \
-      "From Windows PowerShell: $pip_cmd install code-review-graph ; code-review-graph install"
+  log_info "Installing $name on Windows (using: $pip_cmd)..."
+  if ! powershell.exe -NoProfile -Command "$pip_cmd install --quiet $package"; then
+    add_skipped_step "$name (PyPI tool, WSL+Windows hybrid)" "Windows pip install $package failed" \
+      "From Windows PowerShell: $pip_cmd install $package${post_install:+ ; $post_install}"
     return 1
   fi
 
-  # code-review-graph.exe is installed into Python's Scripts directory, which is often
-  # NOT on Windows PATH. Resolve the absolute path via Python's sysconfig
-  # and invoke it directly. Try the standard Scripts dir, then the user one.
-  local py_cmd="py"
-  case "$pip_cmd" in
-    "py -m pip")     py_cmd="py" ;;
-    "python -m pip") py_cmd="python" ;;
-    "pip")           py_cmd="python" ;;
-  esac
+  # If a post-install command is given, locate the installed .exe in Python's
+  # Scripts directory and run it through powershell.exe. Without this lookup
+  # the .exe usually isn't on Windows PATH.
+  if [[ -n "$post_install" ]]; then
+    local py_cmd="py"
+    case "$pip_cmd" in
+      "py -m pip")     py_cmd="py" ;;
+      "python -m pip") py_cmd="python" ;;
+      "pip")           py_cmd="python" ;;
+    esac
 
-  local sys_scripts user_scripts graphify_exe=""
-  sys_scripts=$(powershell.exe -NoProfile -Command "$py_cmd -c \"import sysconfig; print(sysconfig.get_path('scripts'))\"" 2>/dev/null | tr -d '\r\n')
-  user_scripts=$(powershell.exe -NoProfile -Command "$py_cmd -c \"import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))\"" 2>/dev/null | tr -d '\r\n')
+    local sys_scripts user_scripts tool_exe=""
+    sys_scripts=$(powershell.exe -NoProfile -Command "$py_cmd -c \"import sysconfig; print(sysconfig.get_path('scripts'))\"" 2>/dev/null | tr -d '\r\n')
+    user_scripts=$(powershell.exe -NoProfile -Command "$py_cmd -c \"import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))\"" 2>/dev/null | tr -d '\r\n')
 
-  if [[ -n "$sys_scripts" ]] && \
-     powershell.exe -NoProfile -Command "Test-Path -LiteralPath '$sys_scripts\\code-review-graph.exe'" 2>/dev/null | grep -qi true; then
-    graphify_exe="$sys_scripts\\code-review-graph.exe"
-  elif [[ -n "$user_scripts" ]] && \
-       powershell.exe -NoProfile -Command "Test-Path -LiteralPath '$user_scripts\\code-review-graph.exe'" 2>/dev/null | grep -qi true; then
-    graphify_exe="$user_scripts\\code-review-graph.exe"
+    if [[ -n "$sys_scripts" ]] && \
+       powershell.exe -NoProfile -Command "Test-Path -LiteralPath '$sys_scripts\\$exe_name'" 2>/dev/null | grep -qi true; then
+      tool_exe="$sys_scripts\\$exe_name"
+    elif [[ -n "$user_scripts" ]] && \
+         powershell.exe -NoProfile -Command "Test-Path -LiteralPath '$user_scripts\\$exe_name'" 2>/dev/null | grep -qi true; then
+      tool_exe="$user_scripts\\$exe_name"
+    fi
+
+    if [[ -z "$tool_exe" ]]; then
+      add_skipped_step "$name (PyPI tool, WSL+Windows hybrid)" \
+        "$exe_name not found in Python's Scripts directory after install" \
+        "From Windows PowerShell: $py_cmd -m pip show $package ; then add Scripts dir to PATH and run: $post_install"
+      return 1
+    fi
+
+    # The post-install command will start with the package name (e.g.
+    # `code-review-graph install` -> rewrite to use the absolute exe path).
+    local rewritten_post="${post_install/$package/&\\\"$tool_exe\\\"}"
+    # Fallback: just run the absolute exe with whatever args follow the package name
+    local post_args="${post_install#$package}"
+    log_info "Running $name post-install (via $tool_exe)..."
+    if ! powershell.exe -NoProfile -Command "& '$tool_exe' $post_args"; then
+      add_skipped_step "$name (PyPI tool, WSL+Windows hybrid)" \
+        "Post-install command failed: $post_install" \
+        "From Windows PowerShell: & '$tool_exe' $post_args"
+      return 1
+    fi
   fi
 
-  if [[ -z "$graphify_exe" ]]; then
-    log_warn "code-review-graph.exe not found in Python's Scripts directory after install."
-    add_skipped_step \
-      "code-review-graph (auto-mode code review indexing)" \
-      "code-review-graph installed but code-review-graph.exe not found at expected location" \
-      "From Windows PowerShell: $py_cmd -m pip show code-review-graph ; then add the package's Scripts dir to PATH and run: code-review-graph install"
-    return 1
-  fi
-
-  log_info "Running code-review-graph install (via $graphify_exe)..."
-  if ! powershell.exe -NoProfile -Command "& '$graphify_exe' install"; then
-    log_warn "Windows code-review-graph install failed."
-    add_skipped_step \
-      "code-review-graph (auto-mode code review indexing)" \
-      "code-review-graph install command failed (code-review-graph was installed but post-install step failed)" \
-      "From Windows PowerShell: & '$graphify_exe' install"
-    return 1
-  fi
-
-  log_info "code-review-graph ready (installed on Windows). Auto-mode runs via SessionStart hook."
+  log_info "$name ready (installed on Windows)."
   return 0
 }
 
-install_code_review_graph() {
-  # In WSL+Windows-claude hybrid: install code-review-graph on the WINDOWS side
-  # using powershell.exe (WSL interop). The Windows-side claude can then invoke it.
+install_pypi_tool() {
+  # args: name | package | postInstall
+  local name="$1" package="$2" post_install="$3"
+
   if is_windows_claude_hybrid; then
-    install_code_review_graph_windows_side
+    install_pypi_tool_windows_side "$name" "$package" "$post_install"
     return
   fi
 
-  # Ensure Python is present
   local pip_cmd
   pip_cmd=$(resolve_pip_command)
   if [[ -z "$pip_cmd" ]]; then
@@ -514,57 +516,128 @@ install_code_review_graph() {
     pip_cmd=$(resolve_pip_command)
     if [[ -z "$pip_cmd" ]]; then
       log_warn "Python installed but pip is not yet on PATH."
-      add_skipped_step \
-        "code-review-graph (auto-mode code review indexing)" \
-        "Python installed but pip not yet on PATH in this shell" \
+      add_skipped_step "$name (PyPI tool)" "Python installed but pip not yet on PATH" \
         "Open a new shell, then re-run setup.sh"
       return
     fi
   fi
 
-  # On macOS (no PEP 668) we can use pip directly. On Linux, PEP 668 blocks
-  # system pip — use pipx, which keeps each CLI tool in its own venv.
-  log_info "Installing code-review-graph (Tree-sitter code intelligence)..."
+  log_info "Installing $name (pip)..."
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    if ! "$pip_cmd" install --quiet code-review-graph; then
-      log_warn "code-review-graph install failed."
-      add_skipped_step \
-        "code-review-graph (auto-mode code review indexing)" \
-        "pip install code-review-graph failed" \
-        "$pip_cmd install code-review-graph && code-review-graph install"
+    if ! "$pip_cmd" install --quiet "$package"; then
+      add_skipped_step "$name (PyPI tool)" "pip install $package failed" \
+        "$pip_cmd install $package${post_install:+ && $post_install}"
       return
     fi
   else
     if ! ensure_pipx; then
-      log_warn "pipx is required on PEP 668 systems but could not be installed."
-      add_skipped_step \
-        "code-review-graph (auto-mode code review indexing)" \
-        "pipx is required on PEP 668 systems and could not be installed" \
-        "sudo apt-get install -y pipx && pipx install code-review-graph && code-review-graph install"
+      add_skipped_step "$name (PyPI tool)" "pipx required on PEP 668 but install failed" \
+        "sudo apt-get install -y pipx && pipx install $package${post_install:+ && $post_install}"
       return
     fi
-    # Make sure pipx's bin dir is reachable in this shell
     export PATH="$HOME/.local/bin:$PATH"
-    if ! pipx install code-review-graph; then
-      log_warn "pipx install code-review-graph failed."
-      add_skipped_step \
-        "code-review-graph (auto-mode code review indexing)" \
-        "pipx install code-review-graph failed" \
-        "pipx install code-review-graph && code-review-graph install"
+    if ! pipx install "$package"; then
+      add_skipped_step "$name (PyPI tool)" "pipx install $package failed" \
+        "pipx install $package${post_install:+ && $post_install}"
       return
     fi
   fi
 
-  if ! code-review-graph install; then
-    log_warn "code-review-graph install failed."
-    add_skipped_step \
-      "code-review-graph (auto-mode code review indexing)" \
-      "code-review-graph install command failed" \
-      "code-review-graph install"
+  if [[ -n "$post_install" ]]; then
+    if ! eval "$post_install"; then
+      add_skipped_step "$name (PyPI tool)" "Post-install '$post_install' failed" "$post_install"
+      return
+    fi
+  fi
+  log_info "$name ready."
+}
+
+install_cargo_tool() {
+  # args: name | git | package
+  local name="$1" git="$2" package="$3"
+  if ! check_command cargo; then
+    log_warn "cargo not on PATH — cannot install $name."
+    add_skipped_step "$name (Rust / cargo tool)" "cargo not installed" \
+      "Install Rust from https://rustup.rs, then: cargo install${git:+ --git $git}${package:+ $package}"
     return
   fi
-  log_info "code-review-graph ready. Auto-mode runs via SessionStart hook (crg-daemon)."
-  log_info "Tip: copy templates/code-review-graphignore into each project root for sensible default excludes."
+  log_info "Installing $name (cargo)..."
+  local args=()
+  if [[ -n "$git" ]]; then args=(--git "$git"); else args=("$package"); fi
+  if ! cargo install "${args[@]}"; then
+    add_skipped_step "$name (Rust / cargo tool)" "cargo install failed" \
+      "cargo install${git:+ --git $git}${package:+ $package}"
+    return
+  fi
+  log_info "$name ready."
+}
+
+install_git_clone_tool() {
+  # args: name | repo | destination | postInstall
+  local name="$1" repo="$2" destination="$3" post_install="$4"
+  if ! check_command git; then
+    add_skipped_step "$name (git-clone tool)" "git not installed" "Install git, then re-run setup."
+    return
+  fi
+  local dest="${destination/#~/$HOME}"
+  local parent
+  parent=$(dirname "$dest")
+  [[ -n "$parent" && ! -d "$parent" ]] && mkdir -p "$parent"
+  if [[ -d "$dest/.git" ]]; then
+    log_info "$name already at $dest — pulling latest..."
+    (cd "$dest" && git pull --quiet) || log_warn "git pull failed for $name"
+  else
+    log_info "Cloning $name from $repo to $dest..."
+    if ! git clone --quiet "https://github.com/$repo" "$dest"; then
+      add_skipped_step "$name (git-clone tool)" "git clone https://github.com/$repo failed" \
+        "git clone https://github.com/$repo $dest"
+      return
+    fi
+  fi
+  if [[ -n "$post_install" ]]; then
+    (cd "$dest" && eval "$post_install") || log_warn "$name post-install failed"
+  fi
+  log_info "$name ready at $dest."
+}
+
+# Read plugins.json tools.<global|domain> entries and dispatch by source.
+install_tools() {
+  local domain="${1:-}"
+  local config_file="$SCRIPT_DIR/plugins.json"
+  [[ -f "$config_file" ]] || return 0
+  local entries
+  entries=$(node -e "
+let raw='';process.stdin.setEncoding('utf8');
+process.stdin.on('data',d=>raw+=d);
+process.stdin.on('end',()=>{
+  let c;try{c=JSON.parse(raw)}catch(e){process.exit(0)}
+  const d='$domain';const t=c.tools||{};
+  const es=[].concat(t.global||[]).concat((d&&t[d])||[]);
+  es.forEach(e=>{
+    const src=e.source||'';
+    process.stdout.write([
+      src,
+      e.name||'',
+      e.package||'',
+      e.git||'',
+      e.repo||'',
+      e.destination||'',
+      e.postInstall||''
+    ].join('\t')+'\n');
+  });
+});
+" < "$config_file")
+  [[ -z "$entries" ]] && return 0
+
+  while IFS=$'\t' read -r source name package git repo destination post_install; do
+    [[ -z "$source" ]] && continue
+    case "$source" in
+      pypi)      install_pypi_tool "$name" "$package" "$post_install" ;;
+      cargo)     install_cargo_tool "$name" "$git" "$package" ;;
+      git-clone) install_git_clone_tool "$name" "$repo" "$destination" "$post_install" ;;
+      *)         log_warn "Unknown tool source '$source' for $name; skipping." ;;
+    esac
+  done <<< "$entries"
 }
 
 verify_installation() {
@@ -638,7 +711,7 @@ run_update() {
   fi
   install_skills
   write_settings
-  install_code_review_graph
+  install_tools
   log_info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
 }
 
@@ -790,7 +863,7 @@ main() {
     write_project_settings
     copy_claude_md "$domain" "$project_type"
   fi
-  install_code_review_graph
+  install_tools "$domain"
 
   # --- Embedded-specific: detect Windows toolchains/flashers via powershell.exe ---
   # Even in hybrid mode the user's toolchains live on Windows; calling powershell.exe
