@@ -290,6 +290,47 @@ working example.
 
 ---
 
+## 9. Tools installed outside `plugins.json`
+
+A handful of things land on every machine but are **not** declared in
+`plugins.json`. They install through the setup script's Python path
+instead, because they're CLI tools published on PyPI rather than
+Claude Code marketplace plugins.
+
+### Current entry: `code-review-graph`
+
+| | |
+|---|---|
+| What it is | Tree-sitter code intelligence + MCP server, replaces graphify |
+| Upstream | [tirth8205/code-review-graph](https://github.com/tirth8205/code-review-graph) |
+| Install path | `setup.ps1` → `Install-CodeReviewGraph` / `setup.sh` → `install_code_review_graph` |
+| How it's invoked | Auto mode via SessionStart hook in `settings/settings-template.json` (ensures `crg-daemon` is running) |
+| Why not in `plugins.json` | Upstream repo has no `.claude-plugin/marketplace.json`. It's a Python package on PyPI (`pip install code-review-graph`), not a Claude Code marketplace plugin. The two install mechanisms aren't interchangeable. |
+
+### When does this migrate into `plugins.json`?
+
+If upstream ever publishes a `.claude-plugin/marketplace.json` (we periodically
+re-check), then:
+
+1. Add their repo to `plugins.json` → `marketplaces[]`
+2. Add the plugin to `global[]`
+3. Delete `Install-CodeReviewGraph` from setup.ps1 and `install_code_review_graph`
+   from setup.sh
+4. Remove the templates/code-review-graphignore generated-ignore path if the
+   plugin handles it natively
+
+Until then, the dual-path setup is intentional, not a bug.
+
+### Adding more PyPI tools later
+
+If we want to install another Python CLI (e.g. `pyright`, `black`, a project-
+specific linter), follow the `Install-CodeReviewGraph` shape — one function per
+tool, called from the main setup flow. We deliberately did **not** generalize
+this into a `tools[]` schema in `plugins.json` because the population is small
+and unlikely to grow fast. Revisit if the count gets above ~3.
+
+---
+
 ## See also
 
 - [user-guide.md](user-guide.md) — end-user setup and invocation
