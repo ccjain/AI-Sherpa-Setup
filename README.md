@@ -180,6 +180,7 @@ Small things that punch above their weight:
 - **For PRs, run `/code-review`** before opening. Catches things you'd otherwise field in review comments.
 - **Use the `/verify` command** when you've made changes — it runs a sanity check (depending on your domain).
 - **Type `! <command>` in the Claude prompt** to run a shell command and have Claude see the output. Useful for "what's in this directory?" or "what does this script say?"
+- **Compact the session at ~70% context usage.** Claude Code shows your token usage near the prompt. When it hits roughly 70%, run **`/compact`** — Claude summarizes the conversation so far and continues with that summary, freeing up space for the rest of your task. Don't wait until Claude auto-compacts near 100%; the manual call gives a cleaner summary because you can hint what to keep ("compact but preserve the file layout we agreed on"). Different from `/clear`, which wipes the conversation entirely.
 
 ---
 
