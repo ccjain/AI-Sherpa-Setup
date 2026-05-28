@@ -58,23 +58,23 @@ scenarios we need to detect and what data each requires.
 - **M** = metadata only (no prompt/response text) — Phase 1.5, no legal hurdle
 - **T** = full transcripts — Phase 2, requires legal/InfoSec sign-off
 
-| # | Scenario | Detection method | Data |
-|---|---|---|---|
-| 1 | **Skill should have fired but didn't (per-session diagnosis)** | Cross-reference session topic vs. installed skills' `description:` fields. Embeddings or keyword match. Aggregate version of this signal (low fire-rate per skill) is captured by scenario 11 with metadata alone. | T |
-| 2 | **Same correction repeated across sessions** | Diff what engineer edits *after* accepting AI output. Hash the (suggestion → edit) deltas; cluster repeats. | T |
-| 3 | **Domain mismatch** | File extensions touched in sessions vs. configured AI Sherpa domain. | M |
-| 4 | **Stale memory contradicting current code** | Compare `~/.claude/memory/*.md` facts against current repo state. | M + T |
-| 5 | **Repeated context-priming** | First N tokens of prompts hashed/embedded; flag boilerplate that recurs. | T |
-| 6 | **Rule existed but didn't trigger** | For each CLAUDE.md rule, define a content signature; scan sessions where it appears but the rule warning didn't. | T |
-| 7 | **Tool misuse / inefficient patterns** | `Bash + cat` instead of Read; `Bash + grep` instead of Grep; permission-prompt rate. | M |
-| 8 | **Sessions ending in frustration / abandonment** | Multiple `/clear`, `/restart`, sessions ending mid-task. Structural signal. | M |
-| 9 | **Inconsistent advice across engineers** | Cluster sessions by intent (embeddings on first prompt); flag divergent first-pass answers. | T |
-| 10 | **High accept-then-revert rate** | Tool suggestion accepted → file edited again within 60s. Effective "yes but actually no". | M |
-| 11 | **Plugin/skill ROI** | For each installed skill: fire rate × accept rate × subsequent-edit rate. | M |
-| 12 | **Onboarding velocity** | Session-length, tool-counts over time for new hires vs. veterans. | M |
-| 13 | **Stale install** | `VERSION` per engineer at session start; flag anyone > N releases behind. | M |
-| 14 | **Workaround / override patterns** | Engineer repeatedly says "ignore the rule" or "actually just do X". | T |
-| 15 | **Cross-engineer lone-genius patterns** | Cluster similar problems; surface the best solution as a candidate skill. | T |
+| # | Scenario | Detection method | Data | Candidate-change bucket (see §12.2) |
+|---|---|---|---|---|
+| 1 | **Skill should have fired but didn't (per-session diagnosis)** | Cross-reference session topic vs. installed skills' `description:` fields. Embeddings or keyword match. Aggregate version of this signal (low fire-rate per skill) is captured by scenario 11 with metadata alone. | T | **#3** update skill `description:` |
+| 2 | **Same correction repeated across sessions** | Diff what engineer edits *after* accepting AI output. Hash the (suggestion → edit) deltas; cluster repeats. | T | **#1** add rule |
+| 3 | **Domain mismatch** | File extensions touched in sessions vs. configured AI Sherpa domain. | M | **#5** setup fix or **#6** onboarding doc |
+| 4 | **Stale memory contradicting current code** | Compare `~/.claude/memory/*.md` facts against current repo state. | M + T | **#1** add rule about memory hygiene |
+| 5 | **Repeated context-priming** | First N tokens of prompts hashed/embedded; flag boilerplate that recurs per-engineer and across engineers (the cross-engineer convergence is the highest-value signal of the whole program). | T | **#1** add rule — the strongest single source of candidate rules |
+| 6 | **Rule existed but didn't trigger** | For each CLAUDE.md rule, define a content signature; scan sessions where it appears but the rule warning didn't. | T | **#2** refine existing rule |
+| 7 | **Tool misuse / inefficient patterns** | `Bash + cat` instead of Read; `Bash + grep` instead of Grep; permission-prompt rate. | M | **#1** add rule |
+| 8 | **Sessions ending in frustration / abandonment** | Multiple `/clear`, `/restart`, sessions ending mid-task. Structural signal. | M | **#1** rule (likely missing) or **#3** skill |
+| 9 | **Inconsistent advice across engineers** | Cluster sessions by intent (embeddings on first prompt); flag divergent first-pass answers. | T | **#2** refine rule (ambiguity in domain) |
+| 10 | **High accept-then-revert rate** | Tool suggestion accepted → file edited again within 60s. Effective "yes but actually no". | M | **#1** rule or **#2** refine rule |
+| 11 | **Plugin/skill ROI** | For each installed skill: fire rate × accept rate × subsequent-edit rate. | M | **#3** update description or **#4** remove plugin |
+| 12 | **Onboarding velocity** | Session-length, tool-counts over time for new hires vs. veterans. | M | **#6** docs or **#5** setup |
+| 13 | **Stale install** | `VERSION` per engineer at session start; flag anyone > N releases behind. | M | **#5** setup fix (update discovery) |
+| 14 | **Workaround / override patterns** | Engineer repeatedly says "ignore the rule" or "actually just do X". | T | **#2** refine rule (too strict / context-blind) |
+| 15 | **Cross-engineer lone-genius patterns** | Cluster similar problems; surface the best solution as a candidate skill. | T | **#1** add rule or **#3** new skill |
 
 **Seven of fifteen scenarios are fully detectable with metadata alone**
 (scenarios 3, 7, 8, 10, 11, 12, 13), and an eighth (1) is partially detectable
@@ -445,22 +445,109 @@ the client side.
 ## 12. Analyzer approach (v1 — no Claude API, no local LLM)
 
 This section captures the concrete analyzer architecture for Phase 2a. The
-goal is **zero ongoing AI/LLM cost** while still extracting useful insights
-from the collected sessions.
+goal is **zero ongoing AI/LLM cost** while still producing useful improvements
+to the AI Sherpa repo every week.
 
-### 12.1 Scenario tiers by required capability
+### 12.1 The single objective
 
-The fifteen silent-failure scenarios from §3 split into three tiers based on what techniques can detect them:
+The analyzer's job is to answer one question every week:
 
-| Tier | Scenarios | Method | Quality |
-|---|---|---|---|
-| **A. Pure tabular / rule-based** | 3, 7, 8, 10, 11, 12, 13 | SQL queries, frequency analysis, structural pattern matching on event data. No model needed. | Excellent |
-| **B. Local embeddings + clustering** | 1, 2, 5, 9, 15 | Local sentence-transformer model + scikit-learn. Identifies similar prompts, repeated corrections, divergent advice, cross-engineer patterns. Runs on CPU at ~1000 sessions/min. | Good — finds patterns but can't *explain* them in natural language |
-| **C. Needs semantic judgment (LLM)** | 4, 6, 14 | "Does this memory entry contradict the current code?" / "Did this CLAUDE.md rule apply but the model glossed over it?" Requires NL reasoning. | Deferred to Phase 2b |
+> *"What should we change in the AI Sherpa repo this week?"*
 
-**v1 covers tiers A and B**, catching 12 of 15 scenarios with zero LLM cost.
+Everything the analyzer produces is in service of that question. Counts,
+rates, clusters, scores — they are all *internal scoring inputs* used to
+rank and justify candidate changes. They are **not** separate dashboard
+outputs. If a metric doesn't help surface or rank a candidate change, it's
+noise and the analyzer doesn't compute it.
 
-### 12.2 Recommended v1 stack
+### 12.2 The six buckets of AI Sherpa changes
+
+Every improvement to this setup falls into exactly one of these:
+
+| # | Change type | Target file(s) |
+|---|---|---|
+| 1 | **Add a rule** | `core/CLAUDE.md` or `domains/<X>/CLAUDE.md` |
+| 2 | **Refine an existing rule** | Same |
+| 3 | **Update a skill description** | `skills/<X>/SKILL.md` `description:` field |
+| 4 | **Add or remove a plugin** | `plugins.json` |
+| 5 | **Update setup behavior** | `setup.bat` / `setup.sh` / `setup.ps1` |
+| 6 | **Update documentation** | `docs/*.md` |
+
+The §3 silent-failure table's "Candidate-change bucket" column maps each
+scenario to one of these. If a finding doesn't map to any of these six,
+it's noise — discard.
+
+### 12.3 The analyzer's only output: candidate-change Issues
+
+Every analyzer finding becomes a GitHub Issue filed into the **same Phase 1
+triage queue** that handles manual feedback. Labels: `feedback`,
+`source:telemetry`, `type/<bucket>`, `domain/<X>`, `severity/*`,
+`confidence/*`, `status/needs-review`.
+
+Example Issue:
+
+```
+Title: [rule] Add malloc-in-ISR warning to embedded domain
+Labels: feedback, source:telemetry, type/add-rule, domain/embedded,
+        severity/high, confidence/high, status/needs-review
+
+## Suggested change
+Add to `domains/embedded/CLAUDE.md` under "Never Do (Embedded)":
+> "Always warn before suggesting `malloc` in any ISR or interrupt-
+>  related context, even when the developer hasn't tagged the
+>  function as an ISR."
+
+## Evidence
+- 14 sessions across 6 embedded engineers in past 30 days where
+  Claude suggested malloc inside what was contextually an ISR
+- Manual feedback Issue #237 reported the same pattern explicitly
+- Sample sessions: [linked]
+
+## Estimated impact
+- Affects ~6 engineers (40% of embedded team)
+- Occurrence rate: ~0.5/engineer/week
+- Severity: high (safety-critical for firmware)
+
+## Confidence
+high — manual feedback corroborates the telemetry cluster.
+```
+
+The Issue is the only artifact the central team interacts with. They
+triage, edit, or reject it; if approved, they write the PR (or — in
+Phase 2b — accept the LLM-drafted diff).
+
+### 12.4 Where metrics actually live
+
+The metrics referenced in §3 (silent-failure scenarios) and the diagnostic
+counts (error rates, ROI, abandonment, accept-then-revert) are still
+computed. They live **inside** each candidate-change Issue body as
+evidence and scoring inputs — never as a separate dashboard or report.
+
+The central team does not consult a dashboard. They consult the triage
+queue. Every metric is justified by what candidate change it helps surface
+or rank.
+
+**Optional single derived artifact:** a one-paragraph summary in the
+existing weekly release email — *"This week: 12 candidate changes filed
+by the analyzer; 8 approved by central team and shipping in v2026.06.01.
+Top domain by candidate count: embedded (5)."* That is the only
+"dashboard."
+
+### 12.5 Detection capability tiers
+
+The fifteen silent-failure scenarios from §3 split into three tiers based
+on what local techniques can detect:
+
+| Tier | Scenarios | Method |
+|---|---|---|
+| **A. Pure tabular / rule-based** | 3, 7, 8, 10, 11, 12, 13 | SQL queries, frequency analysis, structural pattern matching on event data. No model needed. |
+| **B. Local embeddings + clustering** | 1, 2, 5, 9, 15 | Local sentence-transformer model + scikit-learn. Identifies similar prompts, repeated corrections, divergent advice, cross-engineer patterns. Runs on CPU at ~1000 sessions/min. |
+| **C. Needs semantic judgment (LLM)** | 4, 6, 14 | NL reasoning over rules and content. Deferred to Phase 2b. |
+
+**v1 covers tiers A and B**, producing candidate-change Issues for 12 of 15
+scenarios with zero LLM cost.
+
+### 12.6 Recommended v1 stack
 
 All running on the same on-prem Windows server as the ingest service:
 
@@ -468,57 +555,84 @@ All running on the same on-prem Windows server as the ingest service:
 |---|---|---|
 | Language | Python 3.11+ | Already on the server; ecosystem fit |
 | Tabular analysis | Pandas + SQLite | No service to run; trivial schema |
-| Embeddings | `sentence-transformers` with `BAAI/bge-small-en-v1.5` or `nomic-embed-text` | Free, CPU-friendly (~1000 sessions/min on a modest CPU), one-time ~100 MB model download |
+| Embeddings | `sentence-transformers` with `BAAI/bge-small-en-v1.5` or `nomic-embed-text` | Free, CPU-friendly (~1000 sessions/min on modest CPU), one-time ~100 MB model download |
 | Clustering | `scikit-learn` (HDBSCAN or KMeans) | Standard, well-understood |
-| Reports | f-string Markdown → HTML via `markdown` library | Static HTML output served from a folder; no web framework needed |
+| Issue filing | `gh issue create` from the analyzer host | Reuses Phase 1 triage queue |
 
-Total new dependencies on the server: ~5 Python packages. Install time: minutes. Ongoing API cost: **zero**.
+Total new dependencies: ~5 Python packages. Install time: minutes.
+Ongoing API cost: **zero**.
 
-### 12.3 Analyzer pipeline (runs as a Windows scheduled task, default nightly)
+### 12.7 Analyzer pipeline (nightly Windows scheduled task)
 
 ```
-1. Read all new JSONL files since last run (tracked by file mtime in SQLite).
-2. Parse each session into events: prompts, responses, tool calls, file edits.
-3. For each tier-A scenario: run the corresponding SQL/pandas query against
-   events. Insert findings into insights DB.
-4. For each tier-B scenario:
-   a. Compute embeddings for prompt openings, edit deltas, etc.
-   b. Cluster within the new batch + recent history.
-   c. Surface clusters exceeding a threshold (e.g., same edit applied 5+ times).
-5. Generate weekly report (HTML) summarizing top findings per domain.
-6. For high-confidence findings, auto-file GitHub Issues into the Phase 1
-   triage queue via `gh issue create` from the analyzer host.
+1. Read all new JSONL files since last run (file mtime tracking in SQLite).
+2. Parse each into events: prompts, responses, tool calls, file edits.
+3. For each scenario in §3:
+   a. Run the corresponding detection (tier-A SQL or tier-B embeddings+cluster).
+   b. For each finding above the trigger threshold, compute scoring inputs:
+      engineer_count, occurrence_count, domain, severity, confidence.
+   c. Look up the scenario's "Candidate-change bucket" from §3.
+   d. Render the candidate-change Issue body (deterministic template per
+      scenario type — see §12.3 example shape).
+   e. `gh issue create` into the triage queue with appropriate labels.
+4. Append a one-paragraph summary to the weekly release email body.
 ```
 
-### 12.4 What "confidence" means without an LLM
+That's the entire analyzer. No dashboards. No separate reports. No periodic
+exports. One nightly process that produces N candidate-change Issues, where
+N is typically 0–20 per night for an org this size.
 
-We don't need natural-language confidence scoring — the existing signal is enough:
+### 12.8 What "confidence" means without an LLM
+
+Same three tiers as §5:
 
 | Confidence | Heuristic |
 |---|---|
-| **High** | Same finding occurs ≥ N times across ≥ M engineers, low intra-cluster variance |
-| **Medium** | Finding has structural backing but limited frequency, OR high frequency in a single engineer |
+| **High** | Same finding occurs ≥ N times across ≥ M engineers, low intra-cluster variance, OR corroborated by a manual feedback Issue |
+| **Medium** | Structural backing but limited frequency, OR high frequency in a single engineer |
 | **Low** | Single occurrence, ambiguous cluster, near-threshold match |
 
-Same three-tier auto-file gate as §5: high → auto-Issue; medium → auto-Issue with `status/needs-analyst`; low → local queue, weekly human review.
+High → auto-file with `status/needs-review`; medium → auto-file with
+`status/needs-analyst`; low → local insights queue, weekly human review
+(no Issue filed yet).
 
-### 12.5 Upgrade paths to LLM (Phase 2b)
+### 12.9 Upgrade paths to LLM (Phase 2b)
 
-When the org is ready to add LLM analysis:
+When the org adds LLM budget, the analyzer's job becomes **converting
+clusters into PR-ready diff suggestions** — not finding new patterns
+(the v1 detectors already do that), but *wording the fix*.
 
-**Path 1 — Claude API for the "explain" step (recommended first move):**
+The key reframe: **the LLM doesn't do the analysis. It writes the fix.**
+The local-only analyzer in v1 surfaces clusters and patterns deterministic-
+ally; Phase 2b adds an LLM step that converts each cluster into PR-ready
+prose for the candidate-change Issue.
 
-- Keep the v1 analyzer for finding candidates.
-- For each candidate (top N per week), make one Claude API call: "given this evidence, write a one-paragraph natural-language description and a suggested rule change."
-- Cost: ~20 candidates × ~10K tokens × Haiku rates ≈ pennies per week.
+**Path 1 — Claude API for diff drafting (recommended first move):**
+
+For each candidate-change Issue (from §12.7 step 3.d), make one Claude API
+call with the cluster's evidence and ask for:
+- Exact rule wording for the target CLAUDE.md / SKILL.md / etc.
+- A unified-diff snippet ready to paste into a PR
+- A one-sentence rationale for the reviewer
+
+The Issue then arrives with the PR draft already inlined. The central team
+accepts/edits, and files the PR with one click.
+
+Cost: ~20 candidates × ~10K tokens × Haiku rates ≈ pennies per week. The
+analyzer continues to find candidates without an LLM; the LLM just polishes
+the output.
 
 **Path 2 — Local open-source LLM on the same server:**
 
-- Drop in `vllm` or `llama.cpp` with a 7–8B model (Llama 3.1 8B, Qwen 2.5 7B).
-- Slower inference, lower quality than Claude, but zero per-call cost.
-- Good fit if data locality is a hard constraint.
+Same job (diff drafting), different model. Drop in `vllm` or `llama.cpp`
+with a 7–8B model (Llama 3.1 8B, Qwen 2.5 7B). Slower inference, lower
+quality than Claude, but zero per-call cost. Good fit when data locality is
+a hard constraint.
 
-Both swap in as **one additional pipeline step** in §12.3. No collection-side changes required.
+Both paths slot in as **one additional step** between §12.7 step 3.d
+(render template) and 3.e (`gh issue create`). No collection-side changes;
+no detection changes. The candidate-change Issue model is the same; only
+the body quality improves.
 
 ---
 
