@@ -372,6 +372,20 @@ Append "Each plugin entry below links to its source on GitHub. Expand the"
 Append "**Skills inside** block to see every individual SKILL.md the plugin"
 Append "ships, with a direct link to each file."
 Append ""
+Append '## How skills get invoked'
+Append ''
+Append 'Skills auto-activate based on the **description** Claude reads from'
+Append "each SKILL.md frontmatter. There is no slash command for an"
+Append "individual skill -- Claude matches the current task to the skill's"
+Append 'description and loads the skill on its own. So the **Trigger /'
+Append 'what it does** column below is the activation criterion: if your'
+Append 'prompt mentions a matching topic, verb (e.g. audit, debug, review),'
+Append 'or a phrase like "Use when..." that the skill description names,'
+Append 'the skill kicks in.'
+Append ''
+Append "To force-load a skill that isn't auto-detecting, just name it in"
+Append 'your prompt (e.g., "Use the board-bringup skill to ...").'
+Append ''
 Append "---"
 Append ""
 
@@ -412,7 +426,7 @@ function Render-PluginsTable {
         if ($skills.Count -eq 0) { continue }
         Append "<details><summary><strong>Skills inside <code>$($r.Name)</code></strong> ($($skills.Count))</summary>"
         Append ""
-        Append "| Skill | Description | Source |"
+        Append "| Skill | Trigger / what it does | Source |"
         Append "|---|---|---|"
         foreach ($s in $skills) {
             $desc = Escape-MdCell $s.Description
@@ -455,7 +469,7 @@ function Render-SkillsTable {
         $skills = @($g.Group)
         Append "<details><summary><strong>Skills from <code>$($g.Name)</code></strong> ($($skills.Count))</summary>"
         Append ""
-        Append "| Skill | Description | Source |"
+        Append "| Skill | Trigger / what it does | Source |"
         Append "|---|---|---|"
         foreach ($s in $skills) {
             $desc = Escape-MdCell $s.Description
