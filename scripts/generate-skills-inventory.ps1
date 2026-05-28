@@ -88,6 +88,162 @@ function Get-RepoClone {
     return $tmp
 }
 
+# --- Plugin introspection ---
+# Marketplaces not listed in plugins.json marketplaces[] but referenced by name
+$BuiltinMarketplaceRepos = @{
+    'claude-plugins-official' = 'anthropics/claude-plugins-official'
+}
+
+# Cache marketplace clones — many plugins share a marketplace.
+# Maps name -> @{ Path = '...'; CloneFailed = $bool }
+$script:MarketplaceClones = @{}
+
+# PS 5.1's ConvertFrom-Json is case-insensitive on object keys and chokes when
+# two keys differ only by case (e.g. ".c" vs ".C" in the official marketplace).
+# JavaScriptSerializer preserves case. Returns hashtables, which still support
+# $h.key dot-access in PS 5.1.
+Add-Type -AssemblyName System.Web.Extensions
+$script:JsonParser = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+$script:JsonParser.MaxJsonLength = 100MB
+function ConvertFrom-JsonCaseSafe {
+    param([string]$Text)
+    return $script:JsonParser.DeserializeObject($Text)
+}
+
+function Get-MarketplaceRepo {
+    param([string]$MarketplaceName)
+    if ($config.marketplaces) {
+        foreach ($m in $config.marketplaces) {
+            if ($m.name -eq $MarketplaceName) { return $m.repo }
+        }
+    }
+    if ($BuiltinMarketplaceRepos.ContainsKey($MarketplaceName)) {
+        return $BuiltinMarketplaceRepos[$MarketplaceName]
+    }
+    return $null
+}
+
+function Get-MarketplaceClone {
+    param([string]$MarketplaceName)
+    if ($script:MarketplaceClones.ContainsKey($MarketplaceName)) {
+        return $script:MarketplaceClones[$MarketplaceName]
+    }
+    $repo = Get-MarketplaceRepo $MarketplaceName
+    if (-not $repo) {
+        $script:MarketplaceClones[$MarketplaceName] = @{ Path = $null; Reason = 'no-repo-mapped' }
+        return $script:MarketplaceClones[$MarketplaceName]
+    }
+    Write-Info "  Cloning marketplace $repo (for '$MarketplaceName')..."
+    $tmp = Get-RepoClone $repo
+    if (-not $tmp) {
+        $script:MarketplaceClones[$MarketplaceName] = @{ Path = $null; Reason = 'clone-failed' }
+    } else {
+        $script:MarketplaceClones[$MarketplaceName] = @{ Path = $tmp; Reason = 'ok' }
+    }
+    return $script:MarketplaceClones[$MarketplaceName]
+}
+
+# Cache external-URL plugin clones too (e.g. claude-plugins-official is a
+# meta marketplace where each plugin.source = { url, sha }).
+$script:ExternalPluginClones = @{}
+
+function Resolve-ExternalPluginClone {
+    param([string]$Url, [string]$Sha)
+    $key = "$Url@$Sha"
+    if ($script:ExternalPluginClones.ContainsKey($key)) {
+        return $script:ExternalPluginClones[$key]
+    }
+    $slug = ($Url -replace '[^A-Za-z0-9]+', '-').TrimStart('-').Substring(0, [Math]::Min(60, ($Url -replace '[^A-Za-z0-9]+', '-').TrimStart('-').Length))
+    $tmp = Join-Path $env:TEMP "ai-sherpa-ext-$slug"
+    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+    # Try a shallow clone first; if a specific SHA is required, fall back to
+    # a full clone + checkout. Most uses don't need exact-SHA depth.
+    & git clone --depth 1 --quiet $Url $tmp
+    if ($LASTEXITCODE -ne 0) {
+        if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+        $script:ExternalPluginClones[$key] = $null
+        return $null
+    }
+    $script:ExternalPluginClones[$key] = $tmp
+    return $tmp
+}
+
+function Clear-ExternalPluginClones {
+    foreach ($p in $script:ExternalPluginClones.Values) {
+        if ($p -and (Test-Path $p)) {
+            Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $script:ExternalPluginClones = @{}
+}
+
+# Returns @{ Skills = N; Status = 'ok'|... } describing a plugin's contents.
+function Get-PluginSkillCount {
+    param([string]$PluginName, [string]$MarketplaceName)
+    $mp = Get-MarketplaceClone $MarketplaceName
+    if (-not $mp.Path) { return @{ Skills = -1; Status = $mp.Reason } }
+    $mpJson = Join-Path $mp.Path '.claude-plugin/marketplace.json'
+    if (-not (Test-Path $mpJson)) { return @{ Skills = -1; Status = 'no-marketplace-json' } }
+    try {
+        $mpData = ConvertFrom-JsonCaseSafe (Get-Content $mpJson -Raw)
+    } catch {
+        return @{ Skills = -1; Status = 'parse-error' }
+    }
+    $plugins = $mpData['plugins']
+    if (-not $plugins) { return @{ Skills = -1; Status = 'no-plugins-array' } }
+    $found = $null
+    foreach ($p in @($plugins)) {
+        if ($p['name'] -eq $PluginName) { $found = $p; break }
+    }
+    if (-not $found) { return @{ Skills = -1; Status = 'plugin-not-found' } }
+
+    # Resolve the plugin's source directory. Two shapes seen in the wild:
+    #   1. source as a string => relative path inside the marketplace repo
+    #   2. source as an object { source: "url"|"github", url: "...", sha: "..." }
+    #      => external repo, must be cloned separately. This is how the
+    #      official `claude-plugins-official` marketplace points at plugins.
+    $source = $found['source']
+    $srcDir = $null
+    if (-not $source) {
+        $srcDir = Join-Path $mp.Path "./plugins/$PluginName"
+    } elseif ($source -is [string]) {
+        $srcDir = Join-Path $mp.Path $source
+    } elseif ($source['url']) {
+        $extClone = Resolve-ExternalPluginClone $source['url'] $source['sha']
+        if (-not $extClone) { return @{ Skills = -1; Status = 'external-clone-failed' } }
+        $srcDir = $extClone
+    } else {
+        return @{ Skills = -1; Status = 'unknown-source-shape' }
+    }
+
+    if (-not (Test-Path $srcDir)) { return @{ Skills = -1; Status = 'no-source-dir' } }
+    $count = (Get-ChildItem -Path $srcDir -Filter 'SKILL.md' -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
+    return @{ Skills = $count; Status = 'ok' }
+}
+
+# Render the suffix appended to a plugin's bullet line.
+function Format-PluginCount {
+    param([string]$PluginName, [string]$MarketplaceName)
+    $info = Get-PluginSkillCount $PluginName $MarketplaceName
+    if ($info.Status -eq 'ok') {
+        $n = $info.Skills
+        $s = if ($n -eq 1) { 'skill' } else { 'skills' }
+        return "$n $s"
+    } else {
+        return "skill count unavailable ($($info.Status))"
+    }
+}
+
+# Clean up cached marketplace clones once the whole inventory has been built.
+function Clear-MarketplaceClones {
+    foreach ($entry in $script:MarketplaceClones.Values) {
+        if ($entry.Path -and (Test-Path $entry.Path)) {
+            Remove-Item $entry.Path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $script:MarketplaceClones = @{}
+}
+
 # Resolve skill entries (skills.<key>) into a list of [Name; Description; SourceRepo; SourceSubpath]
 function Resolve-SkillEntries {
     param($Entries)
@@ -163,7 +319,8 @@ Append "### Plugins"
 Append ""
 if ($config.global -and @($config.global).Count -gt 0) {
     foreach ($p in $config.global) {
-        Append "- ``$($p.name)`` @ ``$($p.marketplace)``"
+        $countLabel = Format-PluginCount $p.name $p.marketplace
+        Append "- ``$($p.name)`` @ ``$($p.marketplace)`` - $countLabel"
     }
 } else {
     Append "_(none)_"
@@ -207,7 +364,8 @@ foreach ($domain in $domainNames) {
     }
     if ($domainPlugins -and @($domainPlugins).Count -gt 0) {
         foreach ($p in $domainPlugins) {
-            Append "- ``$($p.name)`` @ ``$($p.marketplace)``"
+            $countLabel = Format-PluginCount $p.name $p.marketplace
+            Append "- ``$($p.name)`` @ ``$($p.marketplace)`` - $countLabel"
         }
     } else {
         Append "_(none - domain relies on global plugins + CLAUDE.md rules)_"
@@ -246,5 +404,9 @@ foreach ($domain in $domainNames) {
 $outDir = Split-Path -Parent $OutputPath
 if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
 $sb.ToString() | Set-Content -Path $OutputPath -Encoding UTF8
+
+# Clean up cached clones (best-effort; ignore failures)
+Clear-MarketplaceClones
+Clear-ExternalPluginClones
 
 Write-Info "Inventory written to: $OutputPath"
