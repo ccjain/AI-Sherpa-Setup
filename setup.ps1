@@ -350,14 +350,35 @@ function Install-PyPiTool {
     Write-Info "$Name ready."
 }
 
+function Install-Rust {
+    if (Test-CommandExists "cargo") { return $true }
+    Write-Info "Rust toolchain not found. Installing via winget (Rustlang.Rustup)..."
+    winget install Rustlang.Rustup --silent --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "winget failed to install Rust (exit $LASTEXITCODE)."
+        return $false
+    }
+    # Refresh PATH so cargo is visible without a terminal restart
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("Path","User") + ";" +
+                "$env:USERPROFILE\.cargo\bin"
+    if (Test-CommandExists "cargo") {
+        Write-Info "Rust installed. cargo $(cargo --version)."
+        return $true
+    }
+    Write-Warn "Rust installed but cargo still not on PATH. Close and reopen your terminal, then re-run setup.bat."
+    return $false
+}
+
 function Install-CargoTool {
     param([string]$Name, [string]$Git, [string]$Package)
     if (-not (Test-CommandExists "cargo")) {
-        Write-Warn "cargo not on PATH - cannot install $Name."
-        Add-SkippedStep -Name "$Name (Rust / cargo tool)" `
-                        -Reason "cargo not installed" `
-                        -ManualInstall "Install Rust from https://rustup.rs, then: cargo install --git $Git"
-        return
+        if (-not (Install-Rust)) {
+            Add-SkippedStep -Name "$Name (Rust / cargo tool)" `
+                            -Reason "Rust toolchain not installed" `
+                            -ManualInstall "Install Rust from https://rustup.rs, then: cargo install$(if ($Git) { ' --git ' + $Git } else { ' ' + $Package })"
+            return
+        }
     }
     Write-Info "Installing $Name (cargo)..."
     if ($Git) {

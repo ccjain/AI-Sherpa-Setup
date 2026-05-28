@@ -367,6 +367,33 @@ In WSL+Windows hybrid mode, PyPI tools install on the Windows side via
 `powershell.exe` interop (`install_pypi_tool_windows_side`). Cargo and
 git-clone tools install on the WSL side (lives in `~/.claude/tools/`).
 
+### Toolchains and prerequisites
+
+Setup auto-installs the language toolchain each `source` needs, so admins
+don't have to ensure Rust / Python / Node is present before running setup:
+
+| `source` | Required toolchain | Auto-installed by |
+|---|---|---|
+| `pypi` | Python 3 + pip (or pipx on PEP 668 systems) | `Install-Python` (winget on Windows) / `install_python` (apt/dnf/brew on Linux/macOS, plus `ensure_pipx` for PEP 668) |
+| `cargo` | Rust toolchain (`cargo`, `rustc`) | `Install-Rust` (winget `Rustlang.Rustup` on Windows) / `install_rust` (apt/dnf/brew, or rustup-init.sh fallback) |
+| `git-clone` | `git` (already a setup prerequisite) | Setup's `Install-Git` / `install_git_via_pkg_manager` (always runs) |
+
+If an auto-install fails (corporate-locked machine, no network, package
+manager not available), the affected tool gets recorded in the
+end-of-setup `SkippedSteps` report with the manual install command.
+The rest of setup continues.
+
+**Caveat for hybrid mode (WSL with Windows-side `claude` binary):** PyPI
+tools install on the Windows side (so Windows-side Claude can see them).
+Cargo and git-clone tools install on the WSL side — they live in
+`~/.claude/tools/` in WSL's filesystem. If Windows-side Claude needs a
+cargo tool (e.g., `rtk` to compress shell output it runs through
+PowerShell), install it manually on the Windows side too:
+```powershell
+winget install Rustlang.Rustup
+cargo install --git https://github.com/rtk-ai/rtk
+```
+
 ### Adding a new tool
 
 To add e.g. a new Python CLI for everyone:

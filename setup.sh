@@ -552,14 +552,52 @@ install_pypi_tool() {
   log_info "$name ready."
 }
 
+install_rust() {
+  if check_command cargo; then return 0; fi
+  log_info "Rust toolchain not found. Installing..."
+  local rc=1
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    if check_command brew; then brew install rust; rc=$?
+    else
+      curl --fail --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+      rc=$?
+    fi
+  elif check_command apt-get; then
+    sudo apt-get update -qq && sudo apt-get install -y rustc cargo; rc=$?
+  elif check_command dnf; then
+    sudo dnf install -y rust cargo; rc=$?
+  else
+    # Fallback: rustup-init
+    curl --fail --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    rc=$?
+  fi
+
+  if [[ $rc -ne 0 ]]; then
+    log_warn "Automatic Rust install failed (rc=$rc)."
+    return 1
+  fi
+
+  # Make rustup-installed cargo reachable in this shell
+  [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
+  export PATH="$HOME/.cargo/bin:$PATH"
+
+  if check_command cargo; then
+    log_info "Rust installed. $(cargo --version)"
+    return 0
+  fi
+  log_warn "Rust installed but cargo not yet on PATH. Open a new shell, then re-run setup.sh."
+  return 1
+}
+
 install_cargo_tool() {
   # args: name | git | package
   local name="$1" git="$2" package="$3"
   if ! check_command cargo; then
-    log_warn "cargo not on PATH — cannot install $name."
-    add_skipped_step "$name (Rust / cargo tool)" "cargo not installed" \
-      "Install Rust from https://rustup.rs, then: cargo install${git:+ --git $git}${package:+ $package}"
-    return
+    if ! install_rust; then
+      add_skipped_step "$name (Rust / cargo tool)" "Rust toolchain not installed" \
+        "Install Rust from https://rustup.rs, then: cargo install${git:+ --git $git}${package:+ $package}"
+      return
+    fi
   fi
   log_info "Installing $name (cargo)..."
   local args=()
