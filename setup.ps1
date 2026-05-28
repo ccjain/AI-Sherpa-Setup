@@ -297,6 +297,29 @@ function Copy-ClaudeMd {
     Write-Info "Domain CLAUDE.md installed at $target"
 }
 
+function Write-AiSherpaState {
+    param([string]$Domain)
+    $stateDir  = "$env:USERPROFILE\.claude"
+    if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
+    $stateFile = "$stateDir\.ai-sherpa-state.json"
+    $state = @{
+        domain    = $Domain
+        installed = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+        version   = "1"
+    }
+    $state | ConvertTo-Json | Set-Content -Path $stateFile -Encoding UTF8
+    Write-Info "Recorded domain '$Domain' in $stateFile (for future --update runs)."
+}
+
+function Get-AiSherpaDomain {
+    $stateFile = "$env:USERPROFILE\.claude\.ai-sherpa-state.json"
+    if (-not (Test-Path $stateFile)) { return $null }
+    try {
+        $state = Get-Content $stateFile -Raw | ConvertFrom-Json
+        return $state.domain
+    } catch { return $null }
+}
+
 function Write-GlobalClaudeMd {
     param([string]$Domain)
     $source = "$ScriptDir\domains\$Domain\CLAUDE.md"
@@ -338,7 +361,7 @@ function Install-Python {
 }
 
 function Install-PyPiTool {
-    param([string]$Name, [string]$Package, [string]$PostInstall)
+    param([string]$Name, [string]$Package, [string]$PostInstall, [switch]$Upgrade)
     $pipCmd = Resolve-PipCommand
     if (-not $pipCmd) {
         if (-not (Install-Python)) { return }
@@ -351,8 +374,12 @@ function Install-PyPiTool {
             return
         }
     }
-    Write-Info "Installing $Name (pip)..."
-    & $pipCmd install --quiet $Package
+    Write-Info "Installing $Name (pip$(if ($Upgrade) { ' --upgrade' }))..."
+    if ($Upgrade) {
+        & $pipCmd install --quiet --upgrade $Package
+    } else {
+        & $pipCmd install --quiet $Package
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "$Name pip install failed (exit $LASTEXITCODE)."
         Add-SkippedStep -Name "$Name (PyPI tool)" `
@@ -418,7 +445,7 @@ function Install-Rust {
 }
 
 function Install-CargoTool {
-    param([string]$Name, [string]$Git, [string]$Package)
+    param([string]$Name, [string]$Git, [string]$Package, [switch]$Upgrade)
     if (-not (Test-CommandExists "cargo")) {
         if (-not (Install-Rust)) {
             Add-SkippedStep -Name "$Name (Rust / cargo tool)" `
@@ -427,17 +454,16 @@ function Install-CargoTool {
             return
         }
     }
-    Write-Info "Installing $Name (cargo)..."
-    if ($Git) {
-        & cargo install --git $Git
-    } else {
-        & cargo install $Package
-    }
+    Write-Info "Installing $Name (cargo$(if ($Upgrade) { ' --force' }))..."
+    $cargoArgs = @('install')
+    if ($Upgrade) { $cargoArgs += '--force' }
+    if ($Git) { $cargoArgs += @('--git', $Git) } else { $cargoArgs += $Package }
+    & cargo @cargoArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "$Name cargo install failed (exit $LASTEXITCODE)."
         Add-SkippedStep -Name "$Name (Rust / cargo tool)" `
                         -Reason "cargo install failed" `
-                        -ManualInstall "cargo install$(if ($Git) { ' --git ' + $Git } else { ' ' + $Package })"
+                        -ManualInstall "cargo install$(if ($Upgrade) { ' --force' })$(if ($Git) { ' --git ' + $Git } else { ' ' + $Package })"
         return
     }
     Write-Info "$Name ready."
@@ -478,7 +504,7 @@ function Install-GitCloneTool {
 }
 
 function Install-Tools {
-    param([string]$Domain)
+    param([string]$Domain, [switch]$Upgrade)
     $configFile = "$ScriptDir\plugins.json"
     if (-not (Test-Path $configFile)) { return }
     try { $config = Get-Content $configFile -Raw | ConvertFrom-Json } catch { return }
@@ -491,8 +517,8 @@ function Install-Tools {
 
     foreach ($t in $entries) {
         switch ($t.source) {
-            'pypi'      { Install-PyPiTool      -Name $t.name -Package $t.package -PostInstall $t.postInstall }
-            'cargo'     { Install-CargoTool     -Name $t.name -Git $t.git -Package $t.package }
+            'pypi'      { Install-PyPiTool      -Name $t.name -Package $t.package -PostInstall $t.postInstall -Upgrade:$Upgrade }
+            'cargo'     { Install-CargoTool     -Name $t.name -Git $t.git -Package $t.package -Upgrade:$Upgrade }
             'git-clone' { Install-GitCloneTool  -Name $t.name -Repo $t.repo -Destination $t.destination -PostInstall $t.postInstall }
             default     { Write-Warn "Unknown tool source '$($t.source)' for $($t.name); skipping." }
         }
@@ -551,17 +577,46 @@ function Show-VerificationReport {
 }
 
 function Invoke-Update {
-    Write-Info "Updating AI Sherpa core skills..."
-    Register-Marketplaces
+    Write-Info "Updating AI Sherpa..."
+
+    # Recall which domain the user picked at install time (state file written
+    # by Write-AiSherpaState). If we can't find it, fall back to "global only":
+    # only refresh global plugins/skills/tools, since we don't know which
+    # domain the user is on.
+    $savedDomain = Get-AiSherpaDomain
+    if ($savedDomain) {
+        Write-Info "Recalled domain '$savedDomain' from previous install."
+    } else {
+        Write-Warn "No saved domain found. Updating global plugins/skills/tools only."
+        Write-Warn "Re-run setup.bat (not --update) once to pick a domain and record state."
+    }
+
+    # Refresh marketplace caches so `claude plugin update` sees latest versions.
+    Register-Marketplaces -Domain $savedDomain
+
+    # Update plugins: globals always, plus the saved domain's plugins.
     $plugins = Read-PluginConfig -Section "global"
     foreach ($entry in $plugins) {
+        Write-Info "Updating $($entry.name)..."
         claude plugin update $entry.name
-        if ($LASTEXITCODE -ne 0) { Write-Warn "$($entry.name) update may have failed - re-run --update to retry." }
     }
-    Install-Skills
+    if ($savedDomain) {
+        $domainPlugins = Read-PluginConfig -Section $savedDomain
+        foreach ($entry in $domainPlugins) {
+            Write-Info "Updating $($entry.name) ($savedDomain)..."
+            claude plugin update $entry.name
+        }
+    }
+
+    # Re-clone raw-skills repos for the saved domain (clone overwrites).
+    Install-Skills -Domain $savedDomain
+
+    # Upgrade tools: pip --upgrade / cargo --force / git pull.
+    Install-Tools -Domain $savedDomain -Upgrade
+
     Write-GlobalSettings
-    Install-Tools
-    Write-Info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
+    Write-Info "Update complete. Plugins, skills, and tools refreshed to latest$(if ($savedDomain) { " for domain '$savedDomain'" })."
+    Write-Info "Project CLAUDE.md was NOT modified."
 }
 
 function Invoke-Uninstall {
@@ -677,7 +732,14 @@ function Invoke-Uninstall {
         }
     }
 
-    # 4. Restore (or remove) settings.json and CLAUDE.md
+    # 4. Remove AI Sherpa state file (.ai-sherpa-state.json — the saved-domain marker)
+    $stateFile = "$env:USERPROFILE\.claude\.ai-sherpa-state.json"
+    if (Test-Path $stateFile) {
+        Write-Info "Removing AI Sherpa state file..."
+        Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
+    }
+
+    # 5. Restore (or remove) settings.json and CLAUDE.md
     Write-Info "Restoring settings + rules..."
     $settingsFile = "$env:USERPROFILE\.claude\settings.json"
     $claudeMd     = "$env:USERPROFILE\.claude\CLAUDE.md"
@@ -824,6 +886,7 @@ if ($isUserLevelRun) {
     # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
     Write-GlobalClaudeMd $domain
     Install-Tools -Domain $domain
+    Write-AiSherpaState -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing
@@ -851,6 +914,7 @@ if ($isUserLevelRun) {
     Write-ProjectSettings
     Copy-ClaudeMd $domain $projectType
     Install-Tools -Domain $domain
+    Write-AiSherpaState -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing

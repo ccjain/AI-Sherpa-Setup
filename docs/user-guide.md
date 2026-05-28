@@ -417,7 +417,47 @@ C:\tools\ai-sherpa\setup.bat --update          # Windows
 bash ~/tools/ai-sherpa/setup.sh --update        # Linux/macOS/WSL
 ```
 
-Updates core plugins and secrets settings. Your project's `CLAUDE.md` is **never** overwritten.
+### What `--update` actually does
+
+The update flow refreshes **everything** in your install to the latest
+upstream version, scoped to the domain you originally picked:
+
+| Layer | How it's refreshed |
+|---|---|
+| Marketplaces | `claude plugin marketplace update <name>` for each marketplace in `plugins.json` — pulls fresh marketplace.json from GitHub |
+| Global plugins (`global[]`) | `claude plugin update <name>` for each — uses the freshly-refreshed marketplace data |
+| Domain plugins (`domains.<x>[]`) | Same `claude plugin update` for every plugin in your originally-picked domain (see "How we remember your domain" below) |
+| Raw skills (`skills.*`) | Each repo is re-cloned shallowly; existing folders in `~/.claude/skills/` are overwritten with latest |
+| PyPI tools (`tools[].source == pypi`) | `pip install --upgrade <package>` |
+| Cargo tools (`tools[].source == cargo`) | `cargo install --force --git <repo>` (rebuilds from latest upstream) |
+| Git-clone tools (`tools[].source == git-clone`) | `git pull` in the destination dir |
+| `~/.claude/settings.json` | Re-written from the current `settings/settings-template.json` |
+| Project `CLAUDE.md` | **Never** touched |
+
+### How we remember your domain
+
+When you first run `setup` and pick a domain, the script writes a small state
+file at `~/.claude/.ai-sherpa-state.json` recording the choice:
+
+```json
+{ "domain": "embedded", "installed": "2026-05-28T14:32:11Z", "version": "1" }
+```
+
+On every subsequent `--update`, the script reads that file and refreshes only
+the plugins / skills / tools for **your** domain — not every domain in
+`plugins.json` (which would error on plugins not installed on your machine).
+
+If the state file is missing (e.g. you've already uninstalled, or the file
+was deleted), `--update` falls back to refreshing globals only and warns you
+to re-run `setup` without the flag to pick a domain.
+
+### Re-running for a different domain
+
+If you want to switch domains (e.g. you originally picked Embedded but now
+want to work in Data), run `setup` **without** `--update`. The interactive
+prompt lets you pick a new domain, installs its plugins/skills/tools, and
+updates the state file. Plugins from the old domain stay installed —
+remove them with `--uninstall` first if you want a truly clean switch.
 
 ---
 

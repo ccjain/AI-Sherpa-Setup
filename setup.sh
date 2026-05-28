@@ -133,6 +133,30 @@ copy_claude_md() {
   log_info "Domain CLAUDE.md installed at $target"
 }
 
+write_ai_sherpa_state() {
+  local domain="$1"
+  local state_dir="$EFFECTIVE_HOME/.claude"
+  mkdir -p "$state_dir"
+  local state_file="$state_dir/.ai-sherpa-state.json"
+  local now
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  cat > "$state_file" <<EOF
+{
+  "domain":    "$domain",
+  "installed": "$now",
+  "version":   "1"
+}
+EOF
+  log_info "Recorded domain '$domain' in $state_file (for future --update runs)."
+}
+
+get_ai_sherpa_domain() {
+  local state_file="$EFFECTIVE_HOME/.claude/.ai-sherpa-state.json"
+  [[ ! -f "$state_file" ]] && return 1
+  node -e "
+try{const c=JSON.parse(require('fs').readFileSync('$state_file','utf8'));if(c.domain)process.stdout.write(c.domain)}catch(e){}" 2>/dev/null
+}
+
 write_global_claude_md() {
   local domain="$1"
   local source="$SCRIPT_DIR/domains/$domain/CLAUDE.md"
@@ -416,9 +440,11 @@ has_windows_interop() {
 }
 
 install_pypi_tool_windows_side() {
-  # args: name | package | postInstall
-  local name="$1" package="$2" post_install="$3"
+  # args: name | package | postInstall | upgrade(true/false)
+  local name="$1" package="$2" post_install="$3" upgrade="${4:-false}"
   local exe_name="${package}.exe"
+  local pip_flag=""
+  [[ "$upgrade" == "true" ]] && pip_flag="--upgrade"
 
   if ! has_windows_interop; then
     log_warn "Windows interop (powershell.exe) not available from this WSL distro."
@@ -462,8 +488,8 @@ install_pypi_tool_windows_side() {
     fi
   fi
 
-  log_info "Installing $name on Windows (using: $pip_cmd)..."
-  if ! powershell.exe -NoProfile -Command "$pip_cmd install --quiet $package"; then
+  log_info "Installing $name on Windows (using: $pip_cmd${pip_flag:+ $pip_flag})..."
+  if ! powershell.exe -NoProfile -Command "$pip_cmd install --quiet $pip_flag $package"; then
     add_skipped_step "$name (PyPI tool, WSL+Windows hybrid)" "Windows pip install $package failed" \
       "From Windows PowerShell: $pip_cmd install $package${post_install:+ ; $post_install}"
     return 1
@@ -534,11 +560,11 @@ install_pypi_tool_windows_side() {
 }
 
 install_pypi_tool() {
-  # args: name | package | postInstall
-  local name="$1" package="$2" post_install="$3"
+  # args: name | package | postInstall | upgrade(true/false)
+  local name="$1" package="$2" post_install="$3" upgrade="${4:-false}"
 
   if is_windows_claude_hybrid; then
-    install_pypi_tool_windows_side "$name" "$package" "$post_install"
+    install_pypi_tool_windows_side "$name" "$package" "$post_install" "$upgrade"
     return
   fi
 
@@ -555,9 +581,11 @@ install_pypi_tool() {
     fi
   fi
 
-  log_info "Installing $name (pip)..."
+  local upgrade_flag=""
+  [[ "$upgrade" == "true" ]] && upgrade_flag="--upgrade"
+  log_info "Installing $name (pip${upgrade_flag:+ $upgrade_flag})..."
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    if ! "$pip_cmd" install --quiet "$package"; then
+    if ! "$pip_cmd" install --quiet $upgrade_flag "$package"; then
       add_skipped_step "$name (PyPI tool)" "pip install $package failed" \
         "$pip_cmd install $package${post_install:+ && $post_install}"
       return
@@ -569,9 +597,14 @@ install_pypi_tool() {
       return
     fi
     export PATH="$HOME/.local/bin:$PATH"
-    if ! pipx install "$package"; then
-      add_skipped_step "$name (PyPI tool)" "pipx install $package failed" \
-        "pipx install $package${post_install:+ && $post_install}"
+    # pipx upgrade vs install — pipx errors on re-install
+    local pipx_action="install"
+    if [[ "$upgrade" == "true" ]] && pipx list 2>/dev/null | grep -q "package $package "; then
+      pipx_action="upgrade"
+    fi
+    if ! pipx "$pipx_action" "$package"; then
+      add_skipped_step "$name (PyPI tool)" "pipx $pipx_action $package failed" \
+        "pipx $pipx_action $package${post_install:+ && $post_install}"
       return
     fi
   fi
@@ -623,8 +656,8 @@ install_rust() {
 }
 
 install_cargo_tool() {
-  # args: name | git | package
-  local name="$1" git="$2" package="$3"
+  # args: name | git | package | upgrade(true/false)
+  local name="$1" git="$2" package="$3" upgrade="${4:-false}"
   if ! check_command cargo; then
     if ! install_rust; then
       add_skipped_step "$name (Rust / cargo tool)" "Rust toolchain not installed" \
@@ -632,12 +665,15 @@ install_cargo_tool() {
       return
     fi
   fi
-  log_info "Installing $name (cargo)..."
-  local args=()
-  if [[ -n "$git" ]]; then args=(--git "$git"); else args=("$package"); fi
-  if ! cargo install "${args[@]}"; then
+  local upgrade_flag=""
+  [[ "$upgrade" == "true" ]] && upgrade_flag="--force"
+  log_info "Installing $name (cargo${upgrade_flag:+ $upgrade_flag})..."
+  local args=("install")
+  [[ -n "$upgrade_flag" ]] && args+=("$upgrade_flag")
+  if [[ -n "$git" ]]; then args+=(--git "$git"); else args+=("$package"); fi
+  if ! cargo "${args[@]}"; then
     add_skipped_step "$name (Rust / cargo tool)" "cargo install failed" \
-      "cargo install${git:+ --git $git}${package:+ $package}"
+      "cargo install${upgrade_flag:+ --force}${git:+ --git $git}${package:+ $package}"
     return
   fi
   log_info "$name ready."
@@ -672,8 +708,9 @@ install_git_clone_tool() {
 }
 
 # Read plugins.json tools.<global|domain> entries and dispatch by source.
+# upgrade=true => pip --upgrade / cargo --force / git pull (already does)
 install_tools() {
-  local domain="${1:-}"
+  local domain="${1:-}" upgrade="${2:-false}"
   local config_file="$SCRIPT_DIR/plugins.json"
   [[ -f "$config_file" ]] || return 0
   local entries
@@ -703,8 +740,8 @@ process.stdin.on('end',()=>{
   while IFS=$'\t' read -r source name package git repo destination post_install; do
     [[ -z "$source" ]] && continue
     case "$source" in
-      pypi)      install_pypi_tool "$name" "$package" "$post_install" ;;
-      cargo)     install_cargo_tool "$name" "$git" "$package" ;;
+      pypi)      install_pypi_tool "$name" "$package" "$post_install" "$upgrade" ;;
+      cargo)     install_cargo_tool "$name" "$git" "$package" "$upgrade" ;;
       git-clone) install_git_clone_tool "$name" "$repo" "$destination" "$post_install" ;;
       *)         log_warn "Unknown tool source '$source' for $name; skipping." ;;
     esac
@@ -769,21 +806,57 @@ show_verification_report() {
 }
 
 run_update() {
-  log_info "Updating AI Sherpa core skills..."
-  register_marketplaces
+  log_info "Updating AI Sherpa..."
+
+  # Recall which domain was picked at install time (state file written by
+  # write_ai_sherpa_state). If not present, fall back to global-only refresh.
+  local saved_domain
+  saved_domain=$(get_ai_sherpa_domain)
+  if [[ -n "$saved_domain" ]]; then
+    log_info "Recalled domain '$saved_domain' from previous install."
+  else
+    log_warn "No saved domain found. Updating global plugins/skills/tools only."
+    log_warn "Re-run bash setup.sh (not --update) once to pick a domain and record state."
+  fi
+
+  # Refresh marketplace caches for the marketplaces this domain actually uses
+  register_marketplaces "$saved_domain"
+
+  # Update global plugins always
   local plugin_list
   plugin_list=$(_read_plugins "global") || { log_error "Cannot read plugins.json — aborting."; exit 1; }
   if [[ -n "$plugin_list" ]]; then
     while IFS='|' read -r type name source; do
       [[ -z "$type" ]] && continue
+      log_info "Updating $name..."
       claude plugin update "$name" \
         || log_warn "$name update may have failed — re-run --update to retry."
     done <<< "$plugin_list"
   fi
-  install_skills
+
+  # Update plugins for the saved domain too
+  if [[ -n "$saved_domain" ]]; then
+    local domain_plugins
+    domain_plugins=$(_read_plugins "$saved_domain") || true
+    if [[ -n "$domain_plugins" ]]; then
+      while IFS='|' read -r type name source; do
+        [[ -z "$type" ]] && continue
+        log_info "Updating $name ($saved_domain)..."
+        claude plugin update "$name" \
+          || log_warn "$name update may have failed — re-run --update to retry."
+      done <<< "$domain_plugins"
+    fi
+  fi
+
+  # Re-clone raw skills (clone overwrites)
+  install_skills "$saved_domain"
+
+  # Upgrade tools: pip --upgrade / cargo --force / git pull
+  install_tools "$saved_domain" "true"
+
   write_settings
-  install_tools
-  log_info "Core skills and settings updated. Project CLAUDE.md was NOT modified."
+  log_info "Update complete. Plugins, skills, and tools refreshed to latest${saved_domain:+ for domain '$saved_domain'}."
+  log_info "Project CLAUDE.md was NOT modified."
 }
 
 run_uninstall() {
@@ -893,7 +966,14 @@ try{
     rm -rf "$tmp"
   done
 
-  # 4. Restore settings.json + CLAUDE.md from .bak (or delete)
+  # 4. Remove AI Sherpa state file (the saved-domain marker)
+  local state_file="$EFFECTIVE_HOME/.claude/.ai-sherpa-state.json"
+  if [[ -f "$state_file" ]]; then
+    log_info "Removing AI Sherpa state file..."
+    rm -f "$state_file"
+  fi
+
+  # 5. Restore settings.json + CLAUDE.md from .bak (or delete)
   log_info "Restoring settings + rules..."
   local settings_file="$EFFECTIVE_HOME/.claude/settings.json"
   local claude_md="$EFFECTIVE_HOME/.claude/CLAUDE.md"
@@ -1091,6 +1171,7 @@ main() {
     copy_claude_md "$domain" "$project_type"
   fi
   install_tools "$domain"
+  write_ai_sherpa_state "$domain"
 
   # --- Embedded-specific: detect Windows toolchains/flashers via powershell.exe ---
   # Even in hybrid mode the user's toolchains live on Windows; calling powershell.exe
