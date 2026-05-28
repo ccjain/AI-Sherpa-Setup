@@ -5,11 +5,15 @@
     { "repo": "jeffallan/claude-skills",            "name": "fullstack-dev-skills"          },
     { "repo": "sickn33/antigravity-awesome-skills", "name": "antigravity-awesome-skills"    },
     { "repo": "anthropics/skills",                  "name": "anthropic-agent-skills"        },
-    { "repo": "wshobson/agents",                    "name": "claude-code-workflows"         }
+    { "repo": "wshobson/agents",                    "name": "claude-code-workflows"         },
+    { "repo": "thedotmack/claude-mem",              "name": "thedotmack"                    },
+    { "repo": "vercel-labs/agent-browser",          "name": "agent-browser"                 }
   ],
   "global": [
     { "name": "superpowers",          "marketplace": "claude-plugins-official" },
-    { "name": "fullstack-dev-skills", "marketplace": "fullstack-dev-skills"    }
+    { "name": "fullstack-dev-skills", "marketplace": "fullstack-dev-skills"    },
+    { "name": "claude-mem",           "marketplace": "thedotmack"              },
+    { "name": "agent-browser",        "marketplace": "agent-browser"           }
   ],
   "domains": {
     "embedded": [
