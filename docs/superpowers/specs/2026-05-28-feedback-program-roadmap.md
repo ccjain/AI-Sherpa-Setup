@@ -710,6 +710,7 @@ the body quality improves.
 
 | Asset | Status |
 |---|---|
+| **Phase 0.5 — Analyzer prototype (local data)** | **Spec'd + implemented**: `2026-05-29-analyzer-prototype-design.md` + `2026-05-29-analyzer-prototype.md` (plan). Implementation on branch `feat/analyzer-prototype`; ships first to validate the detection model before any infrastructure work. |
 | Phase 1 design (manual feedback + triage + release + email) | **Spec'd**: `2026-05-28-feedback-release-pipeline-design.md` (commit `181da4e`) |
 | Phase 1 implementation plan | Not yet written. Next step after this roadmap is approved. |
 | Phase 1.5 design (metadata telemetry) | Concepts captured in §11 + §12 of this roadmap. Full spec to be written before Phase 1.5 implementation, ideally in parallel with Phase 1. |
@@ -723,9 +724,9 @@ the body quality improves.
 
 In order:
 
-1. **User reviews this roadmap.** Pin down anything that needs adjustment.
-2. **User reviews the Phase 1 spec** (`2026-05-28-feedback-release-pipeline-design.md`). Approve or request changes.
-3. **Write the Phase 1 implementation plan** (via the writing-plans skill). This produces the step-by-step task list to ship Phase 1.
+1. **Ship Phase 0.5 (analyzer prototype).** Run against local Claude Code session data; self-validate the candidate-change findings; tune detector thresholds. Implementation shipped on branch `feat/analyzer-prototype` (~1 day of work). Merge to master when self-review passes.
+2. **User reviews this roadmap and the Phase 1 spec** if not already done.
+3. **Write the Phase 1 implementation plan** (done — commit `bab4924`).
 4. **Implement Phase 1.** ~2–3 weeks.
 5. **In parallel with #4:** Start the legal/InfoSec engagement for Phase 2a (full transcripts). Write the Phase 1.5 spec (metadata telemetry — concrete starting point in §11 of this roadmap). Land the small structural PR (zone discipline tooling).
 6. **Implement Phase 1.5** once Phase 1 is shipping. ~4–6 weeks.

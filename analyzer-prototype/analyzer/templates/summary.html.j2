@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI Sherpa analyzer — summary</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; padding: 2rem; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; }
+  .meta { color: #666; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 0.4rem 0.6rem; text-align: left; border-bottom: 1px solid #eee; }
+  th { background: #f5f5f5; cursor: pointer; user-select: none; }
+  th:hover { background: #ececec; }
+  .sev-critical { color: #b60205; font-weight: 600; }
+  .sev-high     { color: #d93f0b; font-weight: 600; }
+  .sev-normal   { color: #555; }
+  .sev-low      { color: #888; }
+  .pill { display: inline-block; padding: 0 0.5em; border-radius: 1em; background: #ededed; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<h1>AI Sherpa analyzer — {{ findings|length }} candidate change{{ '' if findings|length == 1 else 's' }}</h1>
+<div class="meta">
+  Generated {{ generated_at }} · input: <code>{{ input_path }}</code> · {{ session_count }} sessions analyzed
+</div>
+<table id="t">
+<thead><tr>
+  <th>#</th><th>Severity</th><th>Scenario</th><th>Bucket</th><th>Domain</th><th>Title</th><th>Confidence</th><th>Samples</th><th></th>
+</tr></thead>
+<tbody>
+{% for f in findings %}
+<tr>
+  <td>{{ loop.index }}</td>
+  <td class="sev-{{ f.severity }}">{{ f.severity }}</td>
+  <td><span class="pill">{{ f.scenario_id }}</span></td>
+  <td>{{ f.bucket }}</td>
+  <td>{{ f.domain or 'any' }}</td>
+  <td>{{ f.title }}</td>
+  <td>{{ f.confidence }}</td>
+  <td>{{ f.sample_session_paths|length }}</td>
+  <td><a href="issues/{{ f._filename }}">view</a></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+<script>
+document.querySelectorAll('#t th').forEach((th, i) => {
+  th.addEventListener('click', () => {
+    const tbody = document.querySelector('#t tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const asc = th.dataset.asc !== 'true';
+    rows.sort((a, b) => {
+      const av = a.children[i].innerText, bv = b.children[i].innerText;
+      const n = parseFloat(av) - parseFloat(bv);
+      return asc ? (isNaN(n) ? av.localeCompare(bv) : n) : (isNaN(n) ? bv.localeCompare(av) : -n);
+    });
+    rows.forEach(r => tbody.appendChild(r));
+    th.dataset.asc = asc;
+  });
+});
+</script>
+</body>
+</html>
