@@ -1,0 +1,35 @@
+name: Lint invocation contracts
+
+on:
+  pull_request:
+    paths:
+      - 'plugins.json'
+      - 'core/CLAUDE.md'
+      - 'domains/**/CLAUDE.md'
+      - 'scripts/lint-invocation-tables.js'
+      - 'scripts/test-lint-invocation.sh'
+      - '.github/workflows/lint-invocation.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'plugins.json'
+      - 'core/CLAUDE.md'
+      - 'domains/**/CLAUDE.md'
+      - 'scripts/lint-invocation-tables.js'
+      - 'scripts/test-lint-invocation.sh'
+      - '.github/workflows/lint-invocation.yml'
+
+jobs:
+  lint:
+    name: Verify plugins.json <-> CLAUDE.md sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run lint
+        run: node scripts/lint-invocation-tables.js
+      - name: Run lint self-tests
+        run: bash scripts/test-lint-invocation.sh
