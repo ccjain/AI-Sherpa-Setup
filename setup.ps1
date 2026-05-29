@@ -484,6 +484,44 @@ function Add-WindowsUserPath {
     $env:Path = $env:Path + ';' + $Dir
 }
 
+# Locate a working Python interpreter to invoke for sysconfig queries. Windows
+# Python distributions (python.org installer, winget) ship 'python.exe' but
+# typically NOT 'python3.exe' — assuming the latter exists silently produces
+# empty output and breaks user-Scripts dir discovery. The Windows 'py' launcher
+# is a separate third candidate.
+function Resolve-PythonInterpreter {
+    foreach ($cand in @('python3', 'python', 'py')) {
+        if (Test-CommandExists $cand) { return $cand }
+    }
+    return $null
+}
+
+# Surface every plausible location where pip --user might have dropped the
+# console-script .exe into the current process's PATH. We try the canonical
+# sysconfig query first; if that interpreter doesn't ship sysconfig results we
+# trust, we also glob %APPDATA%\Python\Python*\Scripts as a belt-and-suspenders
+# backstop. Idempotent — Add-WindowsUserPath skips dirs already on PATH.
+function Add-PythonUserScriptsToPath {
+    $pyExe = Resolve-PythonInterpreter
+    if ($pyExe) {
+        $pyArgs = if ($pyExe -eq 'py') {
+            @('-3', '-c', "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))")
+        } else {
+            @('-c', "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))")
+        }
+        try {
+            $userScripts = & $pyExe @pyArgs 2>$null
+            if ($userScripts) { Add-WindowsUserPath $userScripts.Trim() }
+        } catch {}
+    }
+    if (Test-Path "$env:APPDATA\Python") {
+        Get-ChildItem "$env:APPDATA\Python" -Directory -Filter "Python*" -ErrorAction SilentlyContinue | ForEach-Object {
+            $scriptsDir = Join-Path $_.FullName "Scripts"
+            if (Test-Path $scriptsDir) { Add-WindowsUserPath $scriptsDir }
+        }
+    }
+}
+
 function Install-Python {
     Write-Info "Python pip not found. Installing Python 3.12 via winget..."
     winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
@@ -558,18 +596,30 @@ function Install-PyPiTool {
                 $pipArgs += $Package
                 & $pipCmd @pipArgs
                 $ok = ($LASTEXITCODE -eq 0)
-                if ($ok) {
-                    try {
-                        $pyExe = if ($pipCmd -eq 'pip3') { 'python3' } else { 'python' }
-                        $userScripts = & $pyExe -c "import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))" 2>$null
-                        if ($userScripts) { Add-WindowsUserPath $userScripts }
-                    } catch {}
-                }
+                if ($ok) { Add-PythonUserScriptsToPath }
             }
         }
 
         if ($ok) {
             if ($PostInstall) {
+                # Before invoking the post-install command, verify its leading
+                # token (the binary the package just installed) is resolvable
+                # on PATH. On Windows the user-Scripts dir may not have made
+                # it into $env:Path despite our best efforts (multiple Python
+                # installs, non-standard sysconfig schemes, sandboxed shells).
+                # In that case, defer the post-install with a clear remediation
+                # instead of crashing with CommandNotFoundException.
+                $postFirstWord = ($PostInstall.Trim() -split '\s+', 2)[0]
+                $postFindable = -not [string]::IsNullOrEmpty($postFirstWord) `
+                                -and ($null -ne (Get-Command $postFirstWord -ErrorAction SilentlyContinue))
+                if (-not $postFindable) {
+                    Write-Warn "$Name installed but '$postFirstWord' is not on PATH in this shell — deferring post-install."
+                    Add-SkippedStep -Name "$Name (post-install)" `
+                                    -Reason "'$postFirstWord' not on PATH in current shell after install" `
+                                    -ManualInstall "Close and reopen the terminal so PATH refreshes, then run: $PostInstall"
+                    Write-Info "$Name installed (post-install deferred — see report above)."
+                    return
+                }
                 Invoke-Expression $PostInstall
                 if ($LASTEXITCODE -ne 0) {
                     Write-Warn "$Name post-install command failed."

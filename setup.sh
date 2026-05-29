@@ -658,6 +658,20 @@ install_pypi_tool() {
   fi
 
   if [[ -n "$post_install" ]]; then
+    # Verify the post-install command's leading token (the binary the package
+    # just installed) is on PATH before invoking. If a fallback installer dumped
+    # the binary into a dir not yet on PATH, defer with a clear remediation
+    # rather than crashing the whole setup with "command not found".
+    local post_first
+    post_first=$(echo "$post_install" | awk '{print $1}')
+    if [[ -n "$post_first" ]] && ! check_command "$post_first"; then
+      log_warn "$name installed but '$post_first' is not on PATH in this shell - deferring post-install."
+      add_skipped_step "$name (post-install)" \
+        "'$post_first' not on PATH in current shell after install" \
+        "Open a new shell so PATH refreshes, then run: $post_install"
+      log_info "$name installed (post-install deferred - see report above)."
+      return
+    fi
     if ! eval "$post_install"; then
       add_skipped_step "$name (PyPI tool)" "Post-install '$post_install' failed" "$post_install"
       return
