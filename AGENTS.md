@@ -107,7 +107,7 @@ The test script:
 | 2 — Domain | `domains/<domain>/CLAUDE.md` | ~275 | Domain-specific rules (embedded, web, backend, data, devops, etc.), **Domain Plugin & Skill Invocation Contract** |
 | 3 — Project | `<project>/CLAUDE.md` (template) | ~100 | Project-specific context, stack, known issues |
 
-**Critical:** Combined total must stay under **~500 lines** to avoid Claude deprioritizing later content. Keep each layer tight and high-signal — verbose rules get ignored. (Previous target was ~300 lines; raised after empirical testing showed Claude reliably honors longer files. See `docs/superpowers/specs/2026-05-29-plugin-invocation-contracts-design.md`.)
+**Critical:** Combined total of Layers 1 + 2 (the merged `~/.claude/CLAUDE.md`) must stay under **~500 lines** to avoid Claude deprioritizing later content. Layer 3 lives in the project repo and is not counted against this budget — Claude Code stacks it on top per-project. Keep each layer tight and high-signal — verbose rules get ignored. (Previous target was ~300 lines combined; raised after empirical testing showed Claude reliably honors longer files. See `docs/superpowers/specs/2026-05-29-plugin-invocation-contracts-design.md`.)
 
 **Layer 1 + Layer 2 merge at setup time.** `setup.ps1` and `setup.sh` concatenate `core/CLAUDE.md` + `domains/<chosen>/CLAUDE.md` (with a `---` separator) and write the result to `~/.claude/CLAUDE.md`. The user's installed file is the merge, not a single layer.
 
