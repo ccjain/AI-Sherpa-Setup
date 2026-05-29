@@ -243,25 +243,37 @@ process.stdin.on('end', () => {
     (config.domains && config.domains[section] || []).forEach(p => { if (p.marketplace) needed.add(p.marketplace); });
   }
 
-  const ms = config.marketplaces || [];
-  ms.forEach(m => {
+  // Map declared marketplaces by name -> repo
+  const declared = new Map();
+  (config.marketplaces || []).forEach(m => {
     const repo = typeof m === 'string' ? m : (m.repo || '');
     const name = typeof m === 'string' ? '' : (m.name || '');
-    if (needed.has(name)) {
-      process.stdout.write(repo + '|' + name + '\n');
-    }
+    if (name && repo) declared.set(name, repo);
+  });
+
+  // Output one line per referenced marketplace: 'repo|name'.
+  // Declared ones include the repo so we can 'marketplace add' them.
+  // Builtins shipped with Claude Code (e.g. claude-plugins-official) have an
+  // empty repo — we only run 'marketplace update' to populate their cache,
+  // which is empty on a fresh install and causes 'plugin not found in
+  // marketplace' errors for the official plugins.
+  needed.forEach(name => {
+    const repo = declared.get(name) || '';
+    process.stdout.write(repo + '|' + name + '\n');
   });
 });
 " < "$config_file")
   if [[ -z "$entries" ]]; then return; fi
   while IFS='|' read -r repo name; do
-    [[ -z "$repo" ]] && continue
-    log_info "Registering marketplace: $repo"
-    claude plugin marketplace add "$repo" 2>/dev/null || true
-    if [[ -n "$name" ]]; then
-      claude plugin marketplace update "$name" 2>/dev/null \
-        || log_warn "Could not update marketplace $name — domain plugins may fail."
+    [[ -z "$name" ]] && continue
+    if [[ -n "$repo" ]]; then
+      log_info "Registering marketplace: $repo"
+      claude plugin marketplace add "$repo" 2>/dev/null || true
+    else
+      log_info "Updating builtin marketplace: $name"
     fi
+    claude plugin marketplace update "$name" 2>/dev/null \
+      || log_warn "Could not update marketplace $name — $name plugins may fail to install."
   done <<< "$entries"
 }
 
@@ -583,8 +595,22 @@ install_pypi_tool() {
 
   local upgrade_flag=""
   [[ "$upgrade" == "true" ]] && upgrade_flag="--upgrade"
-  log_info "Installing $name (pip${upgrade_flag:+ $upgrade_flag})..."
-  if [[ "$OSTYPE" == "darwin"* ]]; then
+  # Prefer isolated installers (uv tool / pipx) so PyPI CLIs like
+  # code-review-graph don't share their dependency env with the user's other
+  # Python tools. Falls back to bare pip only when nothing better is on PATH.
+  if check_command uv; then
+    local uv_action="install"
+    [[ "$upgrade" == "true" ]] && uv_action="upgrade"
+    log_info "Installing $name (uv tool $uv_action)..."
+    if ! uv tool "$uv_action" "$package"; then
+      add_skipped_step "$name (PyPI tool)" "uv tool $uv_action $package failed" \
+        "uv tool $uv_action $package${post_install:+ && $post_install}"
+      return
+    fi
+    export PATH="$HOME/.local/bin:$PATH"
+  elif [[ "$OSTYPE" == "darwin"* ]] && ! check_command pipx; then
+    log_warn "$name will install into the global Python env ($pip_cmd). For isolation, install 'uv' (https://docs.astral.sh/uv/) or 'pipx' first and re-run."
+    log_info "Installing $name (pip${upgrade_flag:+ $upgrade_flag})..."
     if ! "$pip_cmd" install --quiet $upgrade_flag "$package"; then
       add_skipped_step "$name (PyPI tool)" "pip install $package failed" \
         "$pip_cmd install $package${post_install:+ && $post_install}"
@@ -619,7 +645,20 @@ install_pypi_tool() {
 }
 
 install_rust() {
-  if check_command cargo; then return 0; fi
+  if check_command cargo; then
+    # cargo is present but may be from an outdated toolchain. Several crates
+    # we install (rtk uses str.floor_char_boundary, stabilized in Rust 1.80)
+    # fail to compile on old stable channels with "unstable library feature"
+    # errors. If rustup is available, refresh the stable channel.
+    if check_command rustup; then
+      log_info "Updating Rust toolchain (rustup update stable)..."
+      rustup update stable 2>/dev/null \
+        || log_warn "rustup update stable failed; if a later cargo install errors with 'unstable library feature', update manually."
+    else
+      log_warn "cargo found but rustup not on PATH; cannot auto-update Rust. If a cargo install later fails with 'unstable library feature', install rustup from https://rustup.rs and re-run."
+    fi
+    return 0
+  fi
   log_info "Rust toolchain not found. Installing..."
   local rc=1
   if [[ "$OSTYPE" == "darwin"* ]]; then

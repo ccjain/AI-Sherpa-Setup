@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 param(
     [switch]$Update,
     [switch]$Uninstall
@@ -6,6 +6,16 @@ param(
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ErrorActionPreference = "Stop"
+
+# Force UTF-8 console I/O for the whole script. PS 5.1 + conhost default to the
+# legacy OEM/ANSI codepage and turn box-drawing chars like █ (UTF-8 E2 96 88)
+# into mojibake (â–ˆ). Belt-and-suspenders: setup.bat also runs `chcp 65001`,
+# and the .ps1 file itself is saved with a UTF-8 BOM so PS 5.1 parses the
+# string literals correctly at load time.
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {}
 
 function Write-Info { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Green }
 function Write-Warn { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Yellow }
@@ -163,22 +173,41 @@ function Register-Marketplaces {
         }
     }
 
+    # Track names we've handled via declared marketplaces. Anything left in $needed
+    # afterwards is assumed to be a builtin shipped with Claude Code itself (e.g.
+    # claude-plugins-official). On a fresh install the builtin's local cache is
+    # empty and `claude plugin install ...@<builtin>` fails with "not found in
+    # marketplace" until we run `marketplace update` to populate it.
+    $handled = New-Object System.Collections.Generic.HashSet[string]
+
     $marketplaces = $config.marketplaces
-    if (-not $marketplaces -or @($marketplaces).Count -eq 0) { return }
-    foreach ($entry in @($marketplaces)) {
-        $repo = if ($entry -is [string]) { $entry } else { $entry.repo }
-        $name = if ($entry -is [string]) { $null } else { $entry.name }
-        if (-not $repo) { continue }
-        if (-not $needed.Contains($name)) { continue }
-        Write-Info "Registering marketplace: $repo"
-        try { & claude plugin marketplace add $repo 2>&1 | Out-Null } catch {}
-        $global:LASTEXITCODE = 0
-        if ($name) {
-            try { & claude plugin marketplace update $name 2>&1 | Out-Null } catch {}
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warn "Could not update marketplace $name - domain plugins may fail."
-                $global:LASTEXITCODE = 0
+    if ($marketplaces -and @($marketplaces).Count -gt 0) {
+        foreach ($entry in @($marketplaces)) {
+            $repo = if ($entry -is [string]) { $entry } else { $entry.repo }
+            $name = if ($entry -is [string]) { $null } else { $entry.name }
+            if (-not $repo) { continue }
+            if (-not $needed.Contains($name)) { continue }
+            Write-Info "Registering marketplace: $repo"
+            try { & claude plugin marketplace add $repo 2>&1 | Out-Null } catch {}
+            $global:LASTEXITCODE = 0
+            if ($name) {
+                try { & claude plugin marketplace update $name 2>&1 | Out-Null } catch {}
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warn "Could not update marketplace $name - domain plugins may fail."
+                    $global:LASTEXITCODE = 0
+                }
+                $handled.Add($name) | Out-Null
             }
+        }
+    }
+
+    foreach ($name in $needed) {
+        if (-not $name -or $handled.Contains($name)) { continue }
+        Write-Info "Updating builtin marketplace: $name"
+        try { & claude plugin marketplace update $name 2>&1 | Out-Null } catch {}
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Could not update marketplace $name - $name plugins may fail to install."
+            $global:LASTEXITCODE = 0
         }
     }
 }
@@ -344,6 +373,30 @@ function Resolve-PipCommand {
     return $null
 }
 
+# Prefer isolated installers (uv tool / pipx) over global pip so PyPI CLIs like
+# code-review-graph don't share their dependency env with the user's other
+# Python tools (Anaconda/Spyder, fastapi, pyopenssl, etc). Global pip is the
+# last resort because it routinely bumps shared libs and breaks pre-existing
+# installs ("starlette 1.2.0 is incompatible with fastapi 0.103.0", etc).
+function Resolve-IsolatedPyInstaller {
+    if (Test-CommandExists "uv")   { return "uv"   }   # uv tool install
+    if (Test-CommandExists "pipx") { return "pipx" }   # pipx install
+    return $null
+}
+
+function Add-WindowsUserPath {
+    param([string]$Dir)
+    if (-not $Dir) { return }
+    if (-not (Test-Path $Dir)) { return }
+    $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+    $pathParts = if ($userPath) { $userPath -split ';' } else { @() }
+    if ($pathParts -contains $Dir) { return }
+    Write-Info "Adding '$Dir' to Windows User PATH..."
+    $userPath = ($userPath -replace ';+$','') + ';' + $Dir
+    [Environment]::SetEnvironmentVariable('PATH', $userPath, 'User')
+    $env:Path = $env:Path + ';' + $Dir
+}
+
 function Install-Python {
     Write-Info "Python pip not found. Installing Python 3.12 via winget..."
     winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
@@ -362,53 +415,76 @@ function Install-Python {
 
 function Install-PyPiTool {
     param([string]$Name, [string]$Package, [string]$PostInstall, [switch]$Upgrade)
-    $pipCmd = Resolve-PipCommand
-    if (-not $pipCmd) {
-        if (-not (Install-Python)) { return }
+
+    $installer = Resolve-IsolatedPyInstaller
+    if (-not $installer) {
+        # No uv / pipx — fall back to plain pip, but warn that this shares the
+        # user's global Python env (Anaconda/Spyder/fastapi conflicts).
         $pipCmd = Resolve-PipCommand
         if (-not $pipCmd) {
-            Write-Warn "Python installed but pip is not yet on PATH."
-            Add-SkippedStep -Name "$Name (PyPI tool)" `
-                            -Reason "Python installed but pip not yet on PATH in this shell" `
-                            -ManualInstall "Close and reopen the terminal, then re-run setup.bat"
-            return
-        }
-    }
-    Write-Info "Installing $Name (pip$(if ($Upgrade) { ' --upgrade' }))..."
-    if ($Upgrade) {
-        & $pipCmd install --quiet --upgrade $Package
-    } else {
-        & $pipCmd install --quiet $Package
-    }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warn "$Name pip install failed (exit $LASTEXITCODE)."
-        Add-SkippedStep -Name "$Name (PyPI tool)" `
-                        -Reason "pip install $Package failed (exit $LASTEXITCODE)" `
-                        -ManualInstall "$pipCmd install $Package$(if ($PostInstall) { '; ' + $PostInstall })"
-        return
-    }
-
-    # Persist Python's Scripts dirs to Windows User PATH if missing, so future
-    # shells / Claude SessionStart hooks can find the installed exe (winget
-    # Python installs don't add these dirs to PATH by default, and pip warns
-    # about it loudly).
-    try {
-        $pyExe = if ($pipCmd -eq 'pip3') { 'python3' } else { 'python' }
-        $sysScripts  = & $pyExe -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>$null
-        $userScripts = & $pyExe -c "import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))" 2>$null
-        $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
-        $pathParts = if ($userPath) { $userPath -split ';' } else { @() }
-        foreach ($s in @($sysScripts, $userScripts)) {
-            if ($s -and (Test-Path $s) -and (-not ($pathParts -contains $s))) {
-                Write-Info "Adding '$s' to Windows User PATH..."
-                $userPath = ($userPath -replace ';+$','') + ';' + $s
-                [Environment]::SetEnvironmentVariable('PATH', $userPath, 'User')
-                $env:Path = $env:Path + ';' + $s
-                $pathParts += $s
+            if (-not (Install-Python)) { return }
+            $pipCmd = Resolve-PipCommand
+            if (-not $pipCmd) {
+                Write-Warn "Python installed but pip is not yet on PATH."
+                Add-SkippedStep -Name "$Name (PyPI tool)" `
+                                -Reason "Python installed but no pip/pipx/uv on PATH in this shell" `
+                                -ManualInstall "Close and reopen the terminal, then re-run setup.bat"
+                return
             }
         }
-    } catch {
-        # Best-effort only; don't fail setup on PATH-fix issues
+        Write-Warn "$Name will install into the global Python env ($pipCmd). For isolation, install 'uv' (https://docs.astral.sh/uv/) or 'pipx' first and re-run."
+        Write-Info "Installing $Name (pip --user$(if ($Upgrade) { ' --upgrade' }))..."
+        $pipArgs = @('install', '--quiet', '--user')
+        if ($Upgrade) { $pipArgs += '--upgrade' }
+        $pipArgs += $Package
+        & $pipCmd @pipArgs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "$Name pip install failed (exit $LASTEXITCODE)."
+            Add-SkippedStep -Name "$Name (PyPI tool)" `
+                            -Reason "pip install $Package failed (exit $LASTEXITCODE)" `
+                            -ManualInstall "$pipCmd install --user $Package$(if ($PostInstall) { '; ' + $PostInstall })"
+            return
+        }
+        # pip --user puts Scripts under the user site; surface that dir to PATH
+        # so post-install and future shells can find the installed exe.
+        try {
+            $pyExe = if ($pipCmd -eq 'pip3') { 'python3' } else { 'python' }
+            $userScripts = & $pyExe -c "import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))" 2>$null
+            if ($userScripts) { Add-WindowsUserPath $userScripts }
+        } catch {}
+    }
+    elseif ($installer -eq 'uv') {
+        Write-Info "Installing $Name (uv tool$(if ($Upgrade) { ' upgrade' } else { ' install' }))..."
+        if ($Upgrade) {
+            & uv tool upgrade $Package
+        } else {
+            & uv tool install $Package
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "$Name uv tool install failed (exit $LASTEXITCODE)."
+            Add-SkippedStep -Name "$Name (PyPI tool)" `
+                            -Reason "uv tool install $Package failed (exit $LASTEXITCODE)" `
+                            -ManualInstall "uv tool install $Package$(if ($PostInstall) { '; ' + $PostInstall })"
+            return
+        }
+        # uv puts tool shims in %USERPROFILE%\.local\bin on Windows by default.
+        Add-WindowsUserPath "$env:USERPROFILE\.local\bin"
+    }
+    else { # pipx
+        Write-Info "Installing $Name (pipx$(if ($Upgrade) { ' upgrade' } else { ' install' }))..."
+        if ($Upgrade) {
+            & pipx upgrade $Package
+        } else {
+            & pipx install $Package
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "$Name pipx install failed (exit $LASTEXITCODE)."
+            Add-SkippedStep -Name "$Name (PyPI tool)" `
+                            -Reason "pipx install $Package failed (exit $LASTEXITCODE)" `
+                            -ManualInstall "pipx install $Package$(if ($PostInstall) { '; ' + $PostInstall })"
+            return
+        }
+        Add-WindowsUserPath "$env:USERPROFILE\.local\bin"
     }
 
     if ($PostInstall) {
@@ -425,7 +501,20 @@ function Install-PyPiTool {
 }
 
 function Install-Rust {
-    if (Test-CommandExists "cargo") { return $true }
+    if (Test-CommandExists "cargo") {
+        # cargo is present but may be from an outdated toolchain. Several crates
+        # we install (rtk uses str.floor_char_boundary, stabilized in Rust 1.80)
+        # fail to compile on old stable channels with "unstable library feature"
+        # errors. If rustup is available, refresh the stable channel.
+        if (Test-CommandExists "rustup") {
+            Write-Info "Updating Rust toolchain (rustup update stable)..."
+            try { & rustup update stable 2>&1 | Out-Null } catch {}
+            $global:LASTEXITCODE = 0
+        } else {
+            Write-Warn "cargo found but rustup not on PATH; cannot auto-update Rust. If a cargo install later fails with 'unstable library feature', install rustup from https://rustup.rs and re-run."
+        }
+        return $true
+    }
     Write-Info "Rust toolchain not found. Installing via winget (Rustlang.Rustup)..."
     winget install Rustlang.Rustup --silent --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) {
