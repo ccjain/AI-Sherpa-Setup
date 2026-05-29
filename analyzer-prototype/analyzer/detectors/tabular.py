@@ -141,3 +141,46 @@ def detect_accept_then_revert(events: pd.DataFrame, embeddings_fn=None) -> Itera
     )]
 
 detect_accept_then_revert.id = "scenario-10"
+
+
+def detect_skill_roi(
+    events: pd.DataFrame,
+    embeddings_fn=None,
+    installed_skills: list[str] | None = None,
+) -> Iterable[Finding]:
+    if events.empty or not installed_skills:
+        return []
+    total_sessions = events.session_id.nunique()
+    if total_sessions == 0:
+        return []
+
+    fired = (
+        events[events.event_type == "skill_invoked"]
+        .groupby("skill_name").session_id.nunique()
+        .to_dict()
+    )
+
+    findings = []
+    for skill in installed_skills:
+        sessions_fired_in = fired.get(skill, 0)
+        rate = sessions_fired_in / total_sessions
+        if rate < 0.02:  # less than 2% of sessions
+            findings.append(Finding(
+                scenario_id="scenario-11",
+                title=f"Skill `{skill}` has near-zero fire rate ({sessions_fired_in}/{total_sessions} sessions)",
+                bucket="skill-fix",
+                domain=None,
+                severity="low" if sessions_fired_in > 0 else "normal",
+                confidence="medium",
+                evidence_md=(
+                    f"`{skill}` is installed but fired in only **{sessions_fired_in} of "
+                    f"{total_sessions} analyzed sessions** ({rate:.1%}).\n\n"
+                    f"**Suggested change:** review the skill's `description:` field. "
+                    f"Either tighten it to match real usage patterns, or remove the "
+                    f"skill from the install list if it is no longer relevant."
+                ),
+                sample_session_paths=[],
+            ))
+    return findings
+
+detect_skill_roi.id = "scenario-11"

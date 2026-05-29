@@ -48,3 +48,12 @@ def test_detect_accept_then_revert():
     from analyzer.detectors.tabular import detect_accept_then_revert
     findings = list(detect_accept_then_revert(_events("accept-revert"), embeddings_fn=None))
     assert any(f.scenario_id == "scenario-10" for f in findings)
+
+
+def test_detect_skill_roi_zero_fires():
+    from analyzer.detectors.tabular import detect_skill_roi
+    events = _events("skill-roi")
+    findings = list(detect_skill_roi(events, embeddings_fn=None, installed_skills=["board-bringup", "graphify"]))
+    assert len(findings) >= 1
+    titles = " ".join(f.title for f in findings)
+    assert "board-bringup" in titles or "graphify" in titles

@@ -1,0 +1,3 @@
+{"type":"user","uuid":"u1","timestamp":"2026-05-28T10:00:00Z","sessionId":"s-roi-1","message":{"role":"user","content":"do a thing"}}
+{"type":"user","uuid":"u2","timestamp":"2026-05-28T10:00:01Z","sessionId":"s-roi-2","message":{"role":"user","content":"do another thing"}}
+{"type":"user","uuid":"u3","timestamp":"2026-05-28T10:00:02Z","sessionId":"s-roi-3","message":{"role":"user","content":"do a third thing"}}
