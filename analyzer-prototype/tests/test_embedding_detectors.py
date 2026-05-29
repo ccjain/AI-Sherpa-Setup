@@ -27,3 +27,19 @@ def test_detect_repeated_priming():
     findings = list(detect_repeated_priming(_events("repeated-priming"), embeddings_fn=fn))
     assert any(f.scenario_id == "scenario-5" for f in findings), \
         f"expected scenario-5 finding, got: {[f.scenario_id for f in findings]}"
+
+
+def test_detect_missed_skill_fire_degrades_on_small_corpus():
+    from analyzer.detectors.embedding import detect_missed_skill_fire
+    fn = make_embeddings_fn()
+    findings = list(detect_missed_skill_fire(_events("repeated-priming"), embeddings_fn=fn))
+    # 5 sessions < the 10-session minimum → no finding.
+    assert findings == []
+
+
+def test_detect_repeated_correction_degrades_on_small_corpus():
+    from analyzer.detectors.embedding import detect_repeated_correction
+    fn = make_embeddings_fn()
+    findings = list(detect_repeated_correction(_events("repeated-priming"), embeddings_fn=fn))
+    # No correction phrases in the fixture → no finding.
+    assert findings == []
