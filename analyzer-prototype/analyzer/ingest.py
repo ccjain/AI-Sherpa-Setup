@@ -53,7 +53,7 @@ def load_events(root: Path | str) -> pd.DataFrame:
 def _parse_session_file(path: Path) -> Iterable[dict[str, Any]]:
     project_path_hash = hashlib.sha256(str(path.parent).encode()).hexdigest()[:16]
     try:
-        with path.open("r", encoding="utf-8") as f:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
             lines = [ln for ln in f if ln.strip()]
     except OSError:
         return
@@ -113,20 +113,29 @@ def _classify_event(obj: dict[str, Any]) -> Iterable[dict[str, Any]]:
                     tool_name = block.get("name", "")
                     args = block.get("input") or {}
                     args_json = json.dumps(args)
-                    first_word = None
-                    if tool_name == "Bash":
-                        cmd = args.get("command", "")
-                        first_word = cmd.strip().split(maxsplit=1)[0] if cmd else None
-                    file_ext = None
-                    if tool_name in ("Read", "Edit", "Write"):
-                        fp = args.get("file_path", "")
-                        if "." in fp:
-                            file_ext = "." + fp.rsplit(".", 1)[1].lower()
-                    yield {"event_type": "tool_call",
-                           "tool_name": tool_name,
-                           "tool_args_json": args_json,
-                           "command_first_word": first_word,
-                           "file_extension": file_ext}
+                    if tool_name == "Skill":
+                        # Skill invocations get their own event type so detectors can find them.
+                        # The skill identifier lives in args["skill"] (confirmed by probing real
+                        # Claude Code JSONL data; fall back to "skill_name" or "name" for safety).
+                        yield {"event_type": "skill_invoked",
+                               "skill_name": args.get("skill") or args.get("skill_name") or args.get("name"),
+                               "tool_name": tool_name,
+                               "tool_args_json": args_json}
+                    else:
+                        first_word = None
+                        if tool_name == "Bash":
+                            cmd = args.get("command", "")
+                            first_word = cmd.strip().split(maxsplit=1)[0] if cmd else None
+                        file_ext = None
+                        if tool_name in ("Read", "Edit", "Write"):
+                            fp = args.get("file_path", "")
+                            if fp:
+                                file_ext = Path(fp).suffix.lower() or None
+                        yield {"event_type": "tool_call",
+                               "tool_name": tool_name,
+                               "tool_args_json": args_json,
+                               "command_first_word": first_word,
+                               "file_extension": file_ext}
 
 
 def _infer_tool_success(content: Any) -> bool | None:

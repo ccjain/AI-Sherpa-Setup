@@ -23,8 +23,11 @@ def test_load_events_recognises_prompt_response_tool_call_tool_result_slashcmd()
     assert {"prompt", "response", "tool_call", "tool_result", "slash_command"} <= types_seen
 
 
-def test_load_events_marks_first_prompt_in_session():
-    events = load_events(FIXTURE_DIR)
+def test_load_events_marks_first_prompt_in_session(tmp_path):
+    # Isolate from sibling fixture files (added in later tasks).
+    import shutil
+    shutil.copy(FIXTURE_DIR / "minimal-session.jsonl", tmp_path / "session.jsonl")
+    events = load_events(tmp_path)
     first_prompts = events[(events.event_type == "prompt") & (events.is_first_in_session == True)]
     assert len(first_prompts) == 1, f"expected exactly 1 first prompt, got {len(first_prompts)}"
 
