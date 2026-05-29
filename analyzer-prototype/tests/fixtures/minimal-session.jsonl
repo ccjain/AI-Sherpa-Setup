@@ -1,0 +1,5 @@
+{"type":"user","uuid":"u1","timestamp":"2026-05-28T10:00:00Z","sessionId":"s-fixture-1","cwd":"/tmp/proj","message":{"role":"user","content":"Help me bring up a new STM32H7 board using Zephyr"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-05-28T10:00:05Z","sessionId":"s-fixture-1","message":{"role":"assistant","content":[{"type":"text","text":"Sure, let me look around."}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-05-28T10:00:06Z","sessionId":"s-fixture-1","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"cat /etc/os-release"}}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-05-28T10:00:07Z","sessionId":"s-fixture-1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"NAME=\"Ubuntu\""}]}}
+{"type":"user","uuid":"u3","timestamp":"2026-05-28T10:00:10Z","sessionId":"s-fixture-1","message":{"role":"user","content":"/clear"}}
