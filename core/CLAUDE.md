@@ -193,3 +193,31 @@ decides. Never skip verification out of confidence.
 The worst outcome is a complete version of something that already exists as a
 one-liner. The best outcome is a complete version of something nobody thought of
 yet — because you searched, understood the landscape, and saw what others missed.
+
+---
+
+## Plugin & Skill Invocation Contract — Global
+
+These plugins ship with AI Sherpa globally. Reach for them by default; the rules
+below override any defaults from their `SKILL.md` descriptions.
+
+### MANDATORY — invoke without asking
+
+| When the user…                                          | Invoke                                  | Why                                  |
+|---------------------------------------------------------|-----------------------------------------|--------------------------------------|
+| says "build a feature", "add X", or "modify behavior"   | `superpowers:brainstorming`             | Hard gate before any implementation  |
+| asks to write tests for new code                        | `superpowers:test-driven-development`   | Test-first standard                  |
+| asks for code review on current branch or a PR          | `superpowers:requesting-code-review`    | Mandatory pre-merge                  |
+
+### Self-described — auto-fires for its listed use cases, no override needed
+
+- `superpowers` — workflow skills (brainstorming, writing-plans, executing-plans, verification-before-completion, ...); the MANDATORY rules above cover the cases where this project has an opinion.
+- `fullstack-dev-skills` — ~66 framework-specific skills (React, Next.js, FastAPI, Django, ...) that auto-activate when their context matches.
+- `claude-mem` — persistent memory across sessions.
+- `agent-browser` — browser automation tasks.
+
+### Diagnostic — if a skill isn't firing when expected
+
+1. Run `/plugin` — does it show `[ON]`?
+2. Installed but not loaded? Run `/reload-plugins`.
+3. Absent? Re-run AI Sherpa setup; check `[ACTION REQUIRED]` at the end.
