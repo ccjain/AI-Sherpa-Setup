@@ -145,6 +145,21 @@ function Update-PathFromRegistry {
                 [System.Environment]::GetEnvironmentVariable('Path','User')
 }
 
+# Returns $true if the named marketplace is already registered in
+# ~/.claude/plugins/known_marketplaces.json. Used by Register-Marketplaces to
+# log [NEW] vs [REFRESH] honestly and skip the redundant `marketplace add`
+# call on re-runs (it's a no-op for already-known marketplaces).
+function Test-MarketplaceRegistered {
+    param([string]$Name)
+    if (-not $Name) { return $false }
+    $f = "$env:USERPROFILE\.claude\plugins\known_marketplaces.json"
+    if (-not (Test-Path $f)) { return $false }
+    try {
+        $j = Get-Content $f -Raw | ConvertFrom-Json
+        return ($null -ne $j.PSObject.Properties[$Name])
+    } catch { return $false }
+}
+
 # Returns the installed version string for a "<name>@<marketplace>" plugin key,
 # or $null if not installed. Used by Install-Plugin to decide install-vs-update
 # and by Invoke-DomainSwitch to decide what to uninstall. Reads claude's own
@@ -382,13 +397,20 @@ function Register-Marketplaces {
             $name = if ($entry -is [string]) { $null } else { $entry.name }
             if (-not $repo) { continue }
             if (-not $needed.Contains($name)) { continue }
-            Write-Info "Registering marketplace: $repo"
-            try { & claude plugin marketplace add $repo 2>&1 | Out-Null } catch {}
-            $global:LASTEXITCODE = 0
+            # Skip the redundant `marketplace add` on re-runs (it's a no-op for
+            # already-known marketplaces). Always refresh the cache via update,
+            # otherwise `claude plugin update` later sees stale catalog data.
+            if (Test-MarketplaceRegistered $name) {
+                Write-Info "  [REFRESH] marketplace $name (already registered, refreshing cache)"
+            } else {
+                Write-Info "  [NEW]     marketplace $name ($repo)"
+                try { & claude plugin marketplace add $repo 2>&1 | Out-Null } catch {}
+                $global:LASTEXITCODE = 0
+            }
             if ($name) {
                 try { & claude plugin marketplace update $name 2>&1 | Out-Null } catch {}
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Warn "Could not update marketplace $name - domain plugins may fail."
+                    Write-Warn "  Could not refresh marketplace $name - plugin versions may be stale."
                     $global:LASTEXITCODE = 0
                 }
                 $handled.Add($name) | Out-Null
@@ -398,10 +420,17 @@ function Register-Marketplaces {
 
     foreach ($name in $needed) {
         if (-not $name -or $handled.Contains($name)) { continue }
-        Write-Info "Updating builtin marketplace: $name"
+        # Builtin marketplaces ship with claude but their local cache starts
+        # empty — update both populates a fresh cache and refreshes an existing
+        # one, so there's no separate `add` path here.
+        if (Test-MarketplaceRegistered $name) {
+            Write-Info "  [REFRESH] builtin marketplace $name (refreshing cache)"
+        } else {
+            Write-Info "  [NEW]     builtin marketplace $name (initial cache fetch)"
+        }
         try { & claude plugin marketplace update $name 2>&1 | Out-Null } catch {}
         if ($LASTEXITCODE -ne 0) {
-            Write-Warn "Could not update marketplace $name - $name plugins may fail to install."
+            Write-Warn "  Could not update marketplace $name - $name plugins may fail to install."
             $global:LASTEXITCODE = 0
         }
     }
