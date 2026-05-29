@@ -1,0 +1,5 @@
+{"type":"user","uuid":"u1","timestamp":"2026-05-28T10:00:00Z","sessionId":"s-rp-1","message":{"role":"user","content":"Remember we use Zephyr RTOS on STM32H7, target board is the Nucleo H743ZI2, please use west build and west flash"}}
+{"type":"user","uuid":"u2","timestamp":"2026-05-28T10:00:01Z","sessionId":"s-rp-2","message":{"role":"user","content":"Remember we use Zephyr on STM32H7, the target is Nucleo H743ZI2, use west to build and flash"}}
+{"type":"user","uuid":"u3","timestamp":"2026-05-28T10:00:02Z","sessionId":"s-rp-3","message":{"role":"user","content":"Remember our setup: Zephyr RTOS, STM32H7, Nucleo H743ZI2 board, west toolchain"}}
+{"type":"user","uuid":"u4","timestamp":"2026-05-28T10:00:03Z","sessionId":"s-rp-4","message":{"role":"user","content":"Remember we use Zephyr on STM32H7 boards Nucleo H743ZI2 use west to build"}}
+{"type":"user","uuid":"u5","timestamp":"2026-05-28T10:00:04Z","sessionId":"s-rp-5","message":{"role":"user","content":"Remember: we are on Zephyr RTOS, STM32H7 Nucleo H743ZI2, west for build/flash"}}
