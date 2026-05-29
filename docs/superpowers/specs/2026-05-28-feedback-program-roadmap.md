@@ -75,36 +75,50 @@ scenarios we need to detect and what data each requires.
 | 13 | **Stale install** | `VERSION` per engineer at session start; flag anyone > N releases behind. | M | **#5** setup fix (update discovery) |
 | 14 | **Workaround / override patterns** | Engineer repeatedly says "ignore the rule" or "actually just do X". | T | **#2** refine rule (too strict / context-blind) |
 | 15 | **Cross-engineer lone-genius patterns** | Cluster similar problems; surface the best solution as a candidate skill. | T | **#1** add rule or **#3** new skill |
+| 16 | **Edits without prior Read** | Per session, count Edit/Write where the same file_path had no preceding Read. Anthropic published research found 43.8% as a quality-regression correlate. Phase 2a (lucemia taxonomy). | T | **#1** add rule (the strongest behavioral correlate of quality regression) |
+| 17 | **Self-admitted errors per 1K tool calls** | Regex on assistant messages for `"I apologize"`, `"you're right"`, `"my mistake"`, `"let me try"` etc., normalized per 1K tool calls. Phase 2a (lucemia taxonomy). | T | **#2** refine rule |
+| 18 | **Low Read:Edit ratio** | Per dev, total Reads / total Edit+Writes. Healthy ≥4.0; degraded ≈2.0 per Anthropic research. Phase 2a (lucemia taxonomy). | M (tool counts only) | **#1** add rule |
+| 19 | **User frustration in prompt text** | Regex on user follow-up prompts for frustration markers (`that's wrong`, `no, don't`, `why did you`, `just do`). Complements scenario-8's structural signal. Phase 2a (lucemia taxonomy). | T | **#1** add rule / **#3** skill |
 
-**Seven of fifteen scenarios are fully detectable with metadata alone**
+**Seven of fifteen original scenarios are fully detectable with metadata alone**
 (scenarios 3, 7, 8, 10, 11, 12, 13), and an eighth (1) is partially detectable
-via the aggregate ROI signal in scenario 11. That's the case for shipping
-Phase 1.5 before Phase 2's legal review completes.
+via the aggregate ROI signal in scenario 11. Three of the four lucemia-derived
+additions are content-dependent (16, 17, 19); scenario 18 needs only tool-call
+counts. Phase 2a covers scenarios 1, 2, 3, 5, 7, 8, 10, 11, 12, 13, 16, 17, 18, 19
+(14 of 19). Phase 2b is what unlocks scenarios 4, 6, 14 (which require
+semantic judgment over rules and memory).
 
 ---
 
-## 4. Three-phase rollout
+## 4. Rollout (3 + 1 phases)
+
+Updated 2026-05-29: Phase 1.5 has been eliminated. Anthropic's Admin API
+(available on Team/Enterprise plans) provides the per-developer structured
+metrics that Phase 1.5 would have collected via an on-device metadata
+collector. With legal/InfoSec already having approved full-transcript
+collection, Phase 2a starts directly from Phase 1 — no separate metadata-only
+intermediate step.
 
 | Phase | Duration | What it adds | Privacy hurdle |
 |---|---|---|---|
+| **0.5 — Analyzer prototype** | ~1 day | Local-data analyzer at `analyzer-prototype/`. 10 detectors over `~/.claude/projects/`. Validates the detector model before any collection infrastructure exists. **Shipped** at commit `efd9fb4`. | None — local data only |
 | **1 — Manual feedback** | 2–3 weeks | `/ai-sherpa-feedback` skill, GH Issue form, triage labels + Project board, weekly release Action, Apps Script email to Google Group, `--update` change-summary tail. | None |
-| **1.5 — Metadata telemetry** | 4–6 weeks (run in parallel with Phase 1 implementation) | On-device collector (events only, no content), ingest endpoint, metadata DB, dashboards/reports. Detects scenarios 3, 7, 8, 10, 11, 12, 13 from §3 (plus the aggregate version of 1 via 11). | None — no transcript content shipped |
-| **2a — Full transcripts + local analyzer (no LLM)** | 2–3 months, gated on legal/InfoSec sign-off | Upgrade collector to ship full sessions. Analyzer built with **rule-based heuristics + local sentence-transformer embeddings + clustering** — no Claude API calls, no local LLM. Catches scenarios 1, 2, 5, 9, 15 with good quality; catches a partial version of 4, 6, 14. Runs on the existing on-prem server. **Zero ongoing API cost.** | **Yes** — legal/InfoSec approval required for full transcripts |
-| **2b — LLM-assisted analyzer** | Adds 2–4 weeks of work after 2a, gated separately on Claude API budget approval OR local LLM deployment | Adds a final "semantic judgment" pass to the analyzer. Tightens detection of scenarios 4, 6, 14 (which need natural-language reasoning over rules and memory). Two options for the LLM: Claude API (cheap when scoped to top-N candidates per week) or a locally-run open model (Llama / Qwen on the on-prem server). | Same as 2a (the data is already approved); plus budget approval for API path |
+| **2a — Multi-developer collection + analyzer** | 4 weeks | On-device collector (full JSONL payload) + FastAPI ingest service + SQLite FTS5 + ChromaDB storage + Anthropic Admin API integration + 14 detectors (Phase 0.5's 10 + lucemia's 4) + auto-filing into Phase 1 triage queue. Two-tier retention (7-day sessions, forever insights). Runs on the existing on-prem Windows server. **Zero ongoing API cost.** | **Approved** — full transcripts already cleared by legal |
+| **2b — LLM-assisted polish** | 1 week | One additional step inside Phase 2a's pipeline: for each new finding above a confidence threshold, call Claude API (Haiku) to draft PR-ready rule wording + unified diff + reviewer rationale. Hard cost cap (~$5/week target). Default OFF; opt-in via `Config.llm_enabled=True`. | None additional; same data already approved |
 
 **Why this order:**
 
-- **Phase 1 first** for one specific reason: it ships fastest *and* it produces
-  the labelled ground-truth corpus the Phase 2 analyzer needs for calibration.
-  Without Phase 1 data, we can't tell if the analyzer is finding real problems
-  or hallucinating ones.
-- **Phase 1.5 in parallel** because metadata-only telemetry has no privacy
-  hurdle and catches 8/15 scenarios. Waiting for Phase 2 to start any
-  telemetry would mean months of blind operation.
-- **Phase 2 in parallel** on the legal/InfoSec track. The engineering work
-  starts when legal completes; the legal review starts *now*. If the review
-  takes 8 weeks, the engineering does not also take 8 weeks of clock time
-  after — they overlap.
+- **Phase 0.5 first** (done): proved the detector model fires on real data before
+  building any collection plumbing. Outputs informed Phase 2a's design and
+  surfaced the OSS landscape that simplified the architecture.
+- **Phase 1 next**: ships fastest, produces a labelled ground-truth corpus the
+  Phase 2a analyzer cross-references for calibration, and trains the central
+  team on the triage rhythm with a small initial inbox.
+- **Phase 2a third**: multi-developer collection scales the detection model
+  beyond a single dev's corpus. Builds on the same triage queue as Phase 1
+  via auto-filing.
+- **Phase 2b last**: layers LLM polish on top of Phase 2a's findings. Optional,
+  opt-in, cost-capped. Not required for the program to deliver value.
 
 ---
 
@@ -115,14 +129,14 @@ team triages them the same way:
 
 ```
 Manual feedback             Telemetry insight
-  (Phase 1)                  (Phase 1.5 / 2)
+  (Phase 1)                  (Phase 2a / 2b)
        │                            │
        │  /ai-sherpa-feedback       │  Analyzer auto-files
        │  → GH Issue                │  → GH Issue
        │  labels: feedback,         │  labels: feedback, source:telemetry,
        │   source:manual,           │   confidence:{high,med,low},
-       │   domain/*,                │   domain/*,
-       │   status/needs-review      │   status/needs-review
+       │   domain/*,                │   type/<bucket>, domain/*,
+       │   status/needs-review      │   severity/*, status/needs-review
        │                            │
        └─────────────┬──────────────┘
                      ▼
@@ -310,10 +324,17 @@ These do not change architecture; they are knobs.
 
 ## 11. Continuous session collection mechanism (v1 — intranet-only, Windows-first)
 
+> **Updated 2026-05-29:** Phase 1.5 has been eliminated; this section's
+> mechanism is now owned by Phase 2a, which ships full-JSONL payload (not
+> metadata-only) and adds the SQLite FTS5 + ChromaDB indexing layer at
+> ingest time (see `2026-05-29-phase2a-design.md` §6 and §8). The Anthropic
+> Admin API integration originally sketched for Phase 1.5 is also folded
+> into Phase 2a (see Phase 2a spec §7). The architectural diagram and
+> mechanism below remain accurate as the foundation; refer to the Phase 2a
+> spec for the layered additions.
+
 This section captures the concrete v1 mechanism the program uses to ship
-session data from each dev's laptop to the on-prem server. The mechanism is
-the same for Phase 1.5 (metadata only) and Phase 2 (full transcripts) — only
-the payload shape differs.
+session data from each dev's laptop to the on-prem server.
 
 ### 11.1 Architecture at a glance
 
@@ -710,28 +731,26 @@ the body quality improves.
 
 | Asset | Status |
 |---|---|
-| **Phase 0.5 — Analyzer prototype (local data)** | **Spec'd + implemented**: `2026-05-29-analyzer-prototype-design.md` + `2026-05-29-analyzer-prototype.md` (plan). Implementation on branch `feat/analyzer-prototype`; ships first to validate the detection model before any infrastructure work. |
-| Phase 1 design (manual feedback + triage + release + email) | **Spec'd**: `2026-05-28-feedback-release-pipeline-design.md` (commit `181da4e`) |
-| Phase 1 implementation plan | Not yet written. Next step after this roadmap is approved. |
-| Phase 1.5 design (metadata telemetry) | Concepts captured in §11 + §12 of this roadmap. Full spec to be written before Phase 1.5 implementation, ideally in parallel with Phase 1. |
-| Phase 2a design (full transcripts + local analyzer) | Concepts captured in §11 + §12. Full spec to be written after Phase 1 ships and legal review is well underway. |
-| Phase 2b design (LLM-assisted analyzer) | Sketch in §12.5. Full spec when Claude API budget or local LLM is approved. |
-| Repo-zone discipline (CI filters, CODEOWNERS, smoke test) | Not yet spec'd. Will be implemented as a small structural PR before any Phase 1.5 / 2 code lands. |
+| **Phase 0.5 — Analyzer prototype (local data)** | **Spec'd + implemented + shipped to master**: `2026-05-29-analyzer-prototype-design.md` + `2026-05-29-analyzer-prototype.md` (plan). Implementation merged at commit `efd9fb4`. 21/21 tests passing; 12 findings on a 44-session real-data corpus. |
+| Phase 1 design (manual feedback + triage + release + email) | **Spec'd**: `2026-05-28-feedback-release-pipeline-design.md` (commit `181da4e`). |
+| Phase 1 implementation plan | **Spec'd**: `2026-05-29-phase1-feedback-release-pipeline.md` (commit `bab4924`). Not yet implemented. |
+| **Phase 1.5 (eliminated)** | ~~Originally planned for metadata-only telemetry. Folded into Phase 2a since Anthropic Admin API now provides the equivalent per-developer metrics layer.~~ |
+| Phase 2a design (multi-developer collection + analyzer) | **Spec'd**: `2026-05-29-phase2a-design.md` (commit `45750f3`). Plan: `2026-05-29-phase2a.md` (commit `f393b18`). Not yet implemented. |
+| Phase 2b design (LLM-assisted polish) | **Spec'd**: `2026-05-29-phase2b-design.md` (commit `c44801f`). Plan: `2026-05-29-phase2b.md` (commit `d20ebdc`). Not yet implemented. |
+| OSS landscape research | `2026-05-29-oss-claude-session-tools-comparison.md` (commit `d691c56`). |
+| Repo-zone discipline (CI filters, CODEOWNERS, smoke test) | Not yet spec'd. Will be implemented as a small structural PR before any Phase 2a server code lands. |
 
 ---
 
 ## 14. Next steps
 
-In order:
+Updated 2026-05-29: post-Phase-0.5 + all-phases-spec'd state.
 
-1. **Ship Phase 0.5 (analyzer prototype).** Run against local Claude Code session data; self-validate the candidate-change findings; tune detector thresholds. Implementation shipped on branch `feat/analyzer-prototype` (~1 day of work). Merge to master when self-review passes.
-2. **User reviews this roadmap and the Phase 1 spec** if not already done.
-3. **Write the Phase 1 implementation plan** (done — commit `bab4924`).
-4. **Implement Phase 1.** ~2–3 weeks.
-5. **In parallel with #4:** Start the legal/InfoSec engagement for Phase 2a (full transcripts). Write the Phase 1.5 spec (metadata telemetry — concrete starting point in §11 of this roadmap). Land the small structural PR (zone discipline tooling).
-6. **Implement Phase 1.5** once Phase 1 is shipping. ~4–6 weeks.
-7. **Write Phase 2a spec + implement** once legal approves and Phase 1 has produced ~6–8 weeks of ground-truth manual feedback for analyzer calibration.
-8. **Decide on Phase 2b (LLM)** once Phase 2a is producing insights and the org has visibility into what the local analyzer can/can't catch.
+1. **User reviews the full bundle** — all 5 specs + 3 plans + this roadmap end-to-end. Tell me what to edit. (Current step.)
+2. **Implement Phase 1.** Spec + plan ready. ~2–3 weeks of work. Manual feedback + triage + release + email. Ships before any Phase 2a infrastructure work.
+3. **Implement Phase 2a.** Spec + plan ready. ~4 weeks of work. Builds the on-prem server + collector + 14 detectors + auto-filer. Joins the Phase 1 triage queue.
+4. **Decide on Phase 2b.** Opt-in after Phase 2a runs for ~4 weeks and we know which candidate-change Issues feel ready for LLM polish.
+5. **Repo-zone discipline PR.** Small structural commit (CI path filters + CODEOWNERS + setup smoke test) before any large Phase 2a code lands. ~1 hour of work.
 
-This roadmap is the parent doc; each phase gets its own design spec and
-implementation plan as it comes due.
+This roadmap is the parent doc; each phase has its own design spec and
+implementation plan.
