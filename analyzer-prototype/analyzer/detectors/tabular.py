@@ -117,35 +117,41 @@ def detect_accept_then_revert(events: pd.DataFrame, embeddings_fn=None) -> Itera
     # Parse file_path out of tool_args_json.
     edits["file_path"] = edits.tool_args_json.apply(_safe_file_path_from_args)
 
-    revert_pairs = 0
+    # Episode = a (session_id, file_path) group with at least one pair of
+    # consecutive edits within 60 seconds. Counted once per group regardless
+    # of how many rapid edits are in the group.
+    episodes = 0
     sample_paths: list[str] = []
     for _, group in edits.groupby(["session_id", "file_path"]):
-        group = group.sort_values("timestamp")
         if len(group) < 2:
             continue
-        ts = group.timestamp.tolist()
-        for i in range(len(ts) - 1):
-            if (ts[i + 1] - ts[i]).total_seconds() <= 60:
-                revert_pairs += 1
-                sample_paths.append(group.session_path.iloc[0])
+        ts = group.sort_values("timestamp").timestamp.tolist()
+        has_rapid_pair = any(
+            (ts[i + 1] - ts[i]).total_seconds() <= 60
+            for i in range(len(ts) - 1)
+        )
+        if has_rapid_pair:
+            episodes += 1
+            sample_paths.append(group.session_path.iloc[0])
 
-    if revert_pairs < 3:
+    if episodes < 3:
         return []
 
     return [Finding(
         scenario_id="scenario-10",
-        title=f"{revert_pairs} accept-then-revert edit pairs detected",
+        title=f"{episodes} accept-then-revert episodes detected",
         bucket="refine-rule",
         domain=None,
         severity="normal",
-        confidence="high" if revert_pairs >= 10 else "medium",
+        confidence="high" if episodes >= 10 else "medium",
         evidence_md=(
-            f"**{revert_pairs} cases** where the same file was edited again "
-            f"within 60 seconds of the previous edit. This pattern indicates "
-            f"Claude was close but not quite right, and the user finished the "
-            f"job manually.\n\n"
-            f"**Suggested change:** sample these sessions; if there's a recurring "
-            f"pattern in what Claude got almost-right, refine the relevant rule."
+            f"**{episodes} (session, file) combinations** showed at least one pair "
+            f"of consecutive edits within 60 seconds — a signal that Claude's first "
+            f"edit was close but not quite right and the user had to follow up "
+            f"immediately. (Multiple rapid edits in the same file count as one "
+            f"episode here; raw pair counts would be much higher.)\n\n"
+            f"**Suggested change:** sample these sessions; if a recurring pattern "
+            f"is visible in what Claude got *almost* right, refine the relevant rule."
         ),
         sample_session_paths=list(dict.fromkeys(sample_paths))[:5],
     )]
@@ -170,28 +176,48 @@ def detect_skill_roi(
         .to_dict()
     )
 
-    findings = []
-    for skill in installed_skills:
+    # Bucket every installed skill by fire rate.
+    zero_fire: list[str] = []
+    low_fire: list[tuple[str, int]] = []   # (skill, count) for rate < 2% but > 0
+    for skill in sorted(installed_skills):
         sessions_fired_in = fired.get(skill, 0)
         rate = sessions_fired_in / total_sessions
-        if rate < 0.02:  # less than 2% of sessions
-            findings.append(Finding(
-                scenario_id="scenario-11",
-                title=f"Skill `{skill}` has near-zero fire rate ({sessions_fired_in}/{total_sessions} sessions)",
-                bucket="skill-fix",
-                domain=None,
-                severity="low" if sessions_fired_in > 0 else "normal",
-                confidence="medium",
-                evidence_md=(
-                    f"`{skill}` is installed but fired in only **{sessions_fired_in} of "
-                    f"{total_sessions} analyzed sessions** ({rate:.1%}).\n\n"
-                    f"**Suggested change:** review the skill's `description:` field. "
-                    f"Either tighten it to match real usage patterns, or remove the "
-                    f"skill from the install list if it is no longer relevant."
-                ),
-                sample_session_paths=[],
-            ))
-    return findings
+        if sessions_fired_in == 0:
+            zero_fire.append(skill)
+        elif rate < 0.02:
+            low_fire.append((skill, sessions_fired_in))
+
+    if not zero_fire and not low_fire:
+        return []
+
+    lines: list[str] = []
+    if zero_fire:
+        lines.append(f"**Skills that never fired** ({len(zero_fire)}):")
+        lines.extend(f"- `{s}`" for s in zero_fire)
+        lines.append("")
+    if low_fire:
+        lines.append(f"**Skills with very low fire rate** ({len(low_fire)}):")
+        lines.extend(f"- `{s}` — fired in {c} of {total_sessions} sessions" for s, c in low_fire)
+        lines.append("")
+
+    body = "\n".join(lines)
+    return [Finding(
+        scenario_id="scenario-11",
+        title=f"{len(zero_fire) + len(low_fire)} of {len(installed_skills)} installed skills have near-zero fire rate",
+        bucket="skill-fix",
+        domain=None,
+        severity="normal",
+        confidence="medium",
+        evidence_md=(
+            f"Across {total_sessions} analyzed sessions, the following installed skills "
+            f"fired in fewer than 2% of sessions:\n\n"
+            f"{body}\n"
+            f"**Suggested change:** for each listed skill, either tighten its "
+            f"`description:` field so it matches the prompts you actually write, or "
+            f"remove it from the install list if it's not relevant to your work."
+        ),
+        sample_session_paths=[],
+    )]
 
 detect_skill_roi.id = "scenario-11"
 

@@ -5,6 +5,31 @@ import pandas as pd
 from analyzer.detectors.base import Finding
 
 
+def _is_real_user_prompt(text: str) -> bool:
+    """Return True if text looks like an actual user message, not system metadata.
+
+    Excludes:
+    - Empty / whitespace-only
+    - Starts with a likely-system tag like `<local-command-caveat>`, `<system-reminder>`,
+      `<command-name>`, `<command-message>`, `<command-args>`, `<local-command-stdout>`,
+      `<command-output>`, `<user-prompt-submit-hook>` — anything beginning with `<` and
+      a known-system word, or just any `<...>` opener followed by ASCII text.
+    - Begins with a slash command (`/foo`) — those are slash-command shells, not prompts.
+    """
+    if not text:
+        return False
+    s = text.lstrip()
+    if not s:
+        return False
+    if s.startswith("/"):
+        return False
+    if s.startswith("<") and ">" in s[:200]:
+        # Looks like an HTML/XML-style tag opener within the first 200 chars.
+        # That's overwhelmingly a system-injected wrapper, not a user prompt.
+        return False
+    return True
+
+
 def _cluster_labels(embs: np.ndarray, min_cluster_size: int = 3) -> np.ndarray:
     """Cluster embeddings, returning integer labels (-1 = noise).
 
@@ -42,8 +67,15 @@ def detect_repeated_priming(events: pd.DataFrame, embeddings_fn) -> Iterable[Fin
     if len(first_prompts) < 3:
         return []
 
-    texts = first_prompts.text.fillna("").str.slice(0, 500).tolist()
-    paths = first_prompts.session_path.tolist()
+    texts_all = first_prompts.text.fillna("").str.slice(0, 500).tolist()
+    paths_all = first_prompts.session_path.tolist()
+    # NEW: filter out system-tag / slash-command first prompts.
+    pairs = [(t, p) for t, p in zip(texts_all, paths_all) if _is_real_user_prompt(t)]
+    if len(pairs) < 3:
+        return []
+    texts = [t for t, _ in pairs]
+    paths = [p for _, p in pairs]
+
     embs = embeddings_fn(texts)
     if embs.shape[0] == 0:
         return []
@@ -139,8 +171,15 @@ def detect_repeated_correction(events: pd.DataFrame, embeddings_fn) -> Iterable[
     if len(corrections) < 5:
         return []
 
-    texts = corrections.text.fillna("").str.slice(0, 300).tolist()
-    paths = corrections.session_path.tolist()
+    texts_all = corrections.text.fillna("").str.slice(0, 300).tolist()
+    paths_all = corrections.session_path.tolist()
+    # NEW: filter out system-tag prompts.
+    pairs = [(t, p) for t, p in zip(texts_all, paths_all) if _is_real_user_prompt(t)]
+    if len(pairs) < 3:
+        return []
+    texts = [t for t, _ in pairs]
+    paths = [p for _, p in pairs]
+
     embs = embeddings_fn(texts)
     if embs.shape[0] < 3:
         return []

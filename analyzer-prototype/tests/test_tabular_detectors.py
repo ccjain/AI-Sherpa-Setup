@@ -51,9 +51,11 @@ def test_detect_skill_roi_zero_fires():
     from analyzer.detectors.tabular import detect_skill_roi
     events = _events("skill-roi")
     findings = list(detect_skill_roi(events, embeddings_fn=None, installed_skills=["board-bringup", "graphify"]))
-    assert len(findings) >= 1
-    titles = " ".join(f.title for f in findings)
-    assert "board-bringup" in titles or "graphify" in titles
+    assert len(findings) == 1
+    assert findings[0].scenario_id == "scenario-11"
+    body = findings[0].evidence_md
+    assert "board-bringup" in body
+    assert "graphify" in body
 
 
 def test_detect_domain_mismatch():
