@@ -203,6 +203,38 @@ assert_file_contains "run_update calls plugin update" "$MOCK_LOG" \
   "plugin update superpowers"
 HOME="$HOME_BAK"; SCRIPT_DIR="$SCRIPT_DIR_BAK"; unset -f claude; rm -rf "$TMP"
 
+
+# --- Test: write_global_claude_md merges core + chosen domain ---
+echo "=== Test: write_global_claude_md merges core + chosen domain ==="
+TMP=$(mktemp -d)
+mkdir -p "$TMP/core" "$TMP/domains/embedded"
+echo "__CORE_SENTINEL__"   > "$TMP/core/CLAUDE.md"
+echo "__DOMAIN_SENTINEL__" > "$TMP/domains/embedded/CLAUDE.md"
+SCRIPT_DIR_BAK="$SCRIPT_DIR"
+EFFECTIVE_HOME_BAK="$EFFECTIVE_HOME"
+HOME_BAK="$HOME"
+SCRIPT_DIR="$TMP"
+HOME="$TMP/home"
+EFFECTIVE_HOME="$TMP/home"
+mkdir -p "$EFFECTIVE_HOME/.claude"
+
+write_global_claude_md embedded
+
+merged="$EFFECTIVE_HOME/.claude/CLAUDE.md"
+assert_file_exists "merged CLAUDE.md written" "$merged"
+assert_file_contains "merged file contains core sentinel"   "$merged" "__CORE_SENTINEL__"
+assert_file_contains "merged file contains domain sentinel" "$merged" "__DOMAIN_SENTINEL__"
+assert_file_contains "merged file contains --- separator"   "$merged" "^---\$"
+
+# Re-run with a pre-existing target → backup must be created
+write_global_claude_md embedded
+assert_file_exists ".bak created on re-run" "${merged}.bak"
+
+SCRIPT_DIR="$SCRIPT_DIR_BAK"
+EFFECTIVE_HOME="$EFFECTIVE_HOME_BAK"
+HOME="$HOME_BAK"
+rm -rf "$TMP"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

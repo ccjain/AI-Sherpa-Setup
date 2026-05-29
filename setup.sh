@@ -157,16 +157,34 @@ write_project_settings() {
 
 copy_claude_md() {
   local domain="$1" project_type="$2"
-  local source="$SCRIPT_DIR/domains/$domain/CLAUDE.md"
+  local core_md="$SCRIPT_DIR/core/CLAUDE.md"
+  local domain_md="$SCRIPT_DIR/domains/$domain/CLAUDE.md"
+  if [[ ! -f "$core_md" ]]; then
+    log_error "core/CLAUDE.md not found at: $core_md"
+    exit 1
+  fi
+  if [[ ! -f "$domain_md" ]]; then
+    log_error "Domain CLAUDE.md not found at: $domain_md"
+    exit 1
+  fi
   local target="$PWD/CLAUDE.md"
   if [[ "$project_type" == "existing" && -f "$target" ]]; then
-    log_warn "Appending domain rules to existing CLAUDE.md (original preserved)"
-    printf '\n---\n<!-- AI Sherpa domain rules — do not edit below this line -->\n' >> "$target"
-    cat "$source" >> "$target"
+    log_warn "Appending AI Sherpa rules to existing CLAUDE.md (original preserved)"
+    {
+      printf '\n---\n'
+      echo "<!-- AI Sherpa core + $domain rules — do not edit below this line -->"
+      cat "$core_md"
+      printf '\n\n---\n\n'
+      cat "$domain_md"
+    } >> "$target"
   else
-    cp "$source" "$target"
+    {
+      cat "$core_md"
+      printf '\n\n---\n\n'
+      cat "$domain_md"
+    } > "$target"
   fi
-  log_info "Domain CLAUDE.md installed at $target"
+  log_info "Merged core + $domain CLAUDE.md installed at $target"
 }
 
 write_ai_sherpa_state() {
@@ -195,9 +213,14 @@ try{const c=JSON.parse(require('fs').readFileSync('$state_file','utf8'));if(c.do
 
 write_global_claude_md() {
   local domain="$1"
-  local source="$SCRIPT_DIR/domains/$domain/CLAUDE.md"
-  if [[ ! -f "$source" ]]; then
-    log_error "Domain CLAUDE.md not found at: $source"
+  local core_md="$SCRIPT_DIR/core/CLAUDE.md"
+  local domain_md="$SCRIPT_DIR/domains/$domain/CLAUDE.md"
+  if [[ ! -f "$core_md" ]]; then
+    log_error "core/CLAUDE.md not found at: $core_md"
+    exit 1
+  fi
+  if [[ ! -f "$domain_md" ]]; then
+    log_error "Domain CLAUDE.md not found at: $domain_md"
     exit 1
   fi
   local claude_dir="$EFFECTIVE_HOME/.claude"
@@ -207,8 +230,14 @@ write_global_claude_md() {
     cp "$target" "${target}.bak"
     log_warn "Backed up existing $target to $target.bak"
   fi
-  cp "$source" "$target"
-  log_info "Domain rules written to $target (active for all projects)"
+  # Merge: core (universal) first, then the chosen domain's rules.
+  # Universal guidance reads first; domain refines on top.
+  {
+    cat "$core_md"
+    printf '\n\n---\n\n'
+    cat "$domain_md"
+  } > "$target"
+  log_info "Merged core + $domain rules written to $target ($(wc -l < "$target") lines)"
 }
 
 # Parse plugins.json for a given section ("global" or domain name).
