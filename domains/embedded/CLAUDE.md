@@ -152,9 +152,24 @@ Not suitable as final authority: timing analysis, hardware-specific optimisation
 
 ---
 
-## Bundled Stack Skills
+## Plugin & Skill Invocation Contract — Domain (embedded)
 
-The globally installed `fullstack-dev-skills` plugin includes skills for **C/C++**
-and **Rust** that auto-activate when working in those languages. No additional
-install is needed. Mention the language explicitly in your prompt if a skill
-isn't activating when you expect it to.
+These plugins ship for the embedded domain. Reach for them by default; the rules
+below override any defaults from their `SKILL.md` descriptions.
+
+### MANDATORY — invoke without asking
+
+| When the user…                                                              | Invoke                  | Why                                                |
+|-----------------------------------------------------------------------------|-------------------------|----------------------------------------------------|
+| asks about Zephyr device-tree, kernel threads, `BIT`/`CONTAINER_OF`         | `zephyr-foundations`    | Reach for Zephyr-specific patterns first           |
+| asks to set up or bring up a new custom board                               | `board-bringup`         | Hardware-aware skill; reads `board.yml` correctly  |
+| asks about West workspace, manifest, or Sysbuild                            | `build-system`          | Zephyr-specific build-system knowledge             |
+| asks about BLE GATT services / characteristics or `Send-When-Idle`          | `connectivity-ble`      | Embedded BLE patterns, including power-aware design |
+| asks about sensors, GPIO, pinctrl, or peripheral fetch/get                  | `hardware-io`           | Sensor subsystem + Devicetree integration          |
+
+### Self-described — auto-fires for its listed use cases, no override needed
+
+- `antigravity-bundle-systems-programming` — systems-programming skills (C/C++/Rust focused) that auto-activate alongside `fullstack-dev-skills`.
+- `beriberikix/zephyr-agent-skills` — 44 Zephyr RTOS skills (BLE, IP networking, USB/CAN, kernel basics + services, hardware I/O, multicore, native simulation, power/performance, security/updates, storage, testing/debugging, industrial protocols, IoT, board bringup, build system, devicetree, modules, specialized, Zephyr foundations) that auto-activate when their context matches.
+
+The C/C++ and Rust skills from the globally-installed `fullstack-dev-skills` plugin also auto-activate in this domain.
