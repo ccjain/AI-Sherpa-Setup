@@ -5,8 +5,19 @@ Iterable[Finding]. Embeddings are ignored here but the signature
 matches the Detector protocol for uniformity.
 """
 from typing import Iterable
+import json
 import pandas as pd
 from analyzer.detectors.base import Finding
+
+
+def _safe_file_path_from_args(j):
+    """Pull file_path from a tool_args_json string. Tolerates None and malformed JSON."""
+    if not isinstance(j, str):
+        return None
+    try:
+        return json.loads(j).get("file_path")
+    except (json.JSONDecodeError, AttributeError):
+        return None
 
 
 def detect_tool_misuse(events: pd.DataFrame, embeddings_fn=None) -> Iterable[Finding]:
@@ -14,13 +25,15 @@ def detect_tool_misuse(events: pd.DataFrame, embeddings_fn=None) -> Iterable[Fin
         return []
     bash_calls = events[(events.event_type == "tool_call") & (events.tool_name == "Bash")]
     suspect = bash_calls[bash_calls.command_first_word.isin(["cat", "head", "tail", "grep"])]
-    if len(suspect) < 5:
+    if suspect.empty:
         return []
 
     findings = []
     for cmd, group in suspect.groupby("command_first_word"):
-        replacement = {"cat": "Read", "head": "Read", "tail": "Read", "grep": "Grep"}[cmd]
         count = len(group)
+        if count < 5:    # per-command threshold; was aggregate before
+            continue
+        replacement = {"cat": "Read", "head": "Read", "tail": "Read", "grep": "Grep"}[cmd]
         sample_paths = group.session_path.unique().tolist()[:5]
         findings.append(Finding(
             scenario_id="scenario-7",
@@ -94,7 +107,6 @@ detect_abandonment.id = "scenario-8"
 def detect_accept_then_revert(events: pd.DataFrame, embeddings_fn=None) -> Iterable[Finding]:
     if events.empty:
         return []
-    import json
     edits = events[
         (events.event_type == "tool_call") & events.tool_name.isin(["Edit", "Write"])
     ].copy()
@@ -103,9 +115,7 @@ def detect_accept_then_revert(events: pd.DataFrame, embeddings_fn=None) -> Itera
     edits = edits.sort_values(["session_id", "timestamp"]).reset_index(drop=True)
 
     # Parse file_path out of tool_args_json.
-    edits["file_path"] = edits.tool_args_json.apply(
-        lambda j: (json.loads(j).get("file_path") if isinstance(j, str) else None)
-    )
+    edits["file_path"] = edits.tool_args_json.apply(_safe_file_path_from_args)
 
     revert_pairs = 0
     sample_paths: list[str] = []

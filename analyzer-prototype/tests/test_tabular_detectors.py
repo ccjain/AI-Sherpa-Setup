@@ -6,20 +6,17 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 def _events(name: str) -> pd.DataFrame:
-    """Helper: load just one fixture file as a DataFrame.
-
-    Uses a temp dir so sibling fixtures don't leak into the test."""
+    """Load a single fixture in isolation (sibling fixtures don't leak in)."""
     import shutil, tempfile
-    tmp = Path(tempfile.mkdtemp())
     src = FIXTURE_DIR / name
-    if src.is_dir():
-        # Copy the directory's *.jsonl files into the tmp dir
-        for f in src.rglob("*.jsonl"):
-            shutil.copy(f, tmp / f.name)
-    else:
-        # Fall back to a single file
-        shutil.copy(src, tmp / src.name)
-    return load_events(tmp)
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
+        if src.is_dir():
+            for f in src.rglob("*.jsonl"):
+                shutil.copy(f, tmp / f.name)
+        else:
+            shutil.copy(src, tmp / src.name)
+        return load_events(tmp)
 
 
 def test_detect_tool_misuse():
