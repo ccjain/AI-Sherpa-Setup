@@ -145,6 +145,27 @@ function Update-PathFromRegistry {
                 [System.Environment]::GetEnvironmentVariable('Path','User')
 }
 
+# Returns the installed version string for a "<name>@<marketplace>" plugin key,
+# or $null if not installed. Used by Install-Plugin to decide install-vs-update
+# and by Invoke-DomainSwitch to decide what to uninstall. Reads claude's own
+# installed_plugins.json — same source of truth that Test-Installation uses.
+function Test-PluginInstalled {
+    param([string]$Key)
+    $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
+    if (-not (Test-Path $installedFile)) { return $null }
+    try {
+        $installed = Get-Content $installedFile -Raw | ConvertFrom-Json
+    } catch { return $null }
+    if (-not $installed.plugins) { return $null }
+    if (-not $installed.plugins.PSObject.Properties[$Key]) { return $null }
+    $entries = $installed.plugins.$Key
+    if (-not $entries) { return $null }
+    # Prefer the user-scope entry's version (that's what setup.bat installs at).
+    $userEntry = $entries | Where-Object { $_.scope -eq 'user' } | Select-Object -First 1
+    if ($userEntry) { return $userEntry.version }
+    return $entries[0].version
+}
+
 function Install-NodeJS {
     $min = $script:MinVersions.node
     $current = Get-ToolVersion 'node'
@@ -276,18 +297,55 @@ function Read-PluginConfig {
 function Install-Plugin {
     param($Entry)
     if ($Entry.marketplace) {
-        claude plugin install "$($Entry.name)@$($Entry.marketplace)" --scope user
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "$($Entry.name) install failed - see error above."
-            Add-InstallFailure "$($Entry.name)@$($Entry.marketplace)"
+        $key = "$($Entry.name)@$($Entry.marketplace)"
+        $existingVersion = Test-PluginInstalled $key
+        if ($existingVersion) {
+            # Already installed -> take the update path so user sees actual
+            # version movement ("already at latest" vs "Updated X -> Y"),
+            # instead of `claude plugin install` silently re-touching the entry.
+            Write-Info "  [UPDATE] $key (currently v$existingVersion)"
+            claude plugin update $key --scope user
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "  $key update returned exit $LASTEXITCODE (continuing)."
+                $global:LASTEXITCODE = 0
+            }
+        } else {
+            Write-Info "  [NEW]    $key installing..."
+            claude plugin install $key --scope user
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "  $($Entry.name) install failed - see error above."
+                Add-InstallFailure $key
+            }
         }
     } elseif ($Entry.github) {
-        try { & claude plugin marketplace add "https://github.com/$($Entry.github)" 2>&1 | Out-Null } catch {}
-        $global:LASTEXITCODE = 0
-        claude plugin install $Entry.name --scope user
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "$($Entry.name) install failed - see error above."
-            Add-InstallFailure "$($Entry.name)"
+        # github source: marketplace name isn't known up-front (claude derives it
+        # from the repo), so look up by "<name>@*" prefix in installed_plugins.json.
+        $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
+        $alreadyInstalled = $false
+        if (Test-Path $installedFile) {
+            try {
+                $j = Get-Content $installedFile -Raw | ConvertFrom-Json
+                if ($j.plugins) {
+                    $alreadyInstalled = @($j.plugins.PSObject.Properties.Name | Where-Object { $_ -like "$($Entry.name)@*" }).Count -gt 0
+                }
+            } catch {}
+        }
+        if ($alreadyInstalled) {
+            Write-Info "  [UPDATE] $($Entry.name) (github: $($Entry.github))"
+            claude plugin update $Entry.name --scope user
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "  $($Entry.name) update returned exit $LASTEXITCODE (continuing)."
+                $global:LASTEXITCODE = 0
+            }
+        } else {
+            Write-Info "  [NEW]    $($Entry.name) installing from github: $($Entry.github)..."
+            try { & claude plugin marketplace add "https://github.com/$($Entry.github)" 2>&1 | Out-Null } catch {}
+            $global:LASTEXITCODE = 0
+            claude plugin install $Entry.name --scope user
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "  $($Entry.name) install failed - see error above."
+                Add-InstallFailure "$($Entry.name)"
+            }
         }
     }
 }
@@ -916,6 +974,30 @@ function Show-VerificationReport {
     Write-Host ""
 }
 
+function Invoke-DomainSwitch {
+    param([string]$OldDomain, [string]$NewDomain)
+    if (-not $OldDomain -or $OldDomain -eq $NewDomain) { return }
+    $oldPlugins = Read-PluginConfig -Section $OldDomain
+    if (-not $oldPlugins -or @($oldPlugins).Count -eq 0) {
+        Write-Info "Domain switch '$OldDomain' -> '$NewDomain': no $OldDomain-specific plugins to remove."
+        return
+    }
+    Write-Info "Domain switch '$OldDomain' -> '$NewDomain': removing $OldDomain-specific plugins..."
+    foreach ($p in $oldPlugins) {
+        if (-not $p.marketplace) { continue }
+        $key = "$($p.name)@$($p.marketplace)"
+        $existingVersion = Test-PluginInstalled $key
+        if ($existingVersion) {
+            Write-Info "  [REMOVE] $key (v$existingVersion)"
+            claude plugin uninstall $key --scope user 2>&1 | Out-Null
+            $global:LASTEXITCODE = 0
+        }
+    }
+    # Note: global plugins, raw skills, and CLI tools are intentionally NOT
+    # removed — they're shared across domains and the new domain's install pass
+    # will refresh them via the same install-or-update logic in Install-Plugin.
+}
+
 function Invoke-Update {
     Write-Info "Updating AI Sherpa..."
 
@@ -1200,6 +1282,28 @@ if (-not $domainMap.ContainsKey($domainChoice)) {
 }
 $domain = $domainMap[$domainChoice]
 
+# Auto-detect whether this is a fresh install or a re-run. The presence of
+# ~/.claude/.ai-sherpa-state.json (written by Write-AiSherpaState at the end of
+# a successful install) is the signal. On re-run:
+#   - same domain  -> Install-Plugin per-entry chooses update vs install
+#   - new  domain  -> uninstall old-domain plugins first, then install new ones
+# This removes the need to pass --update explicitly for the common case.
+$savedDomain = Get-AiSherpaDomain
+$isReinstall = $null -ne $savedDomain
+if ($isReinstall) {
+    if ($savedDomain -eq $domain) {
+        Write-Info "AI Sherpa already installed for domain '$domain'. Re-running:"
+        Write-Info "  - existing plugins will be UPDATED to latest"
+        Write-Info "  - any new entries in plugins.json will be installed fresh"
+        Write-Info "  - CLI tools will be upgraded"
+    } else {
+        Write-Info "AI Sherpa already installed for domain '$savedDomain'. Switching to '$domain'."
+        Invoke-DomainSwitch -OldDomain $savedDomain -NewDomain $domain
+    }
+} else {
+    Write-Info "AI Sherpa not installed yet — running fresh install for domain '$domain'."
+}
+
 # Register extra marketplaces + install skills (both paths)
 Register-Marketplaces -Domain $domain
 Install-CoreSkills
@@ -1226,7 +1330,7 @@ if ($isUserLevelRun) {
     # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
     Write-GlobalClaudeMd $domain
     Enable-WindowsLongPaths
-    Install-Tools -Domain $domain
+    Install-Tools -Domain $domain -Upgrade:$isReinstall
     Write-AiSherpaState -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
@@ -1257,7 +1361,7 @@ if ($isUserLevelRun) {
     Write-ProjectSettings
     Copy-ClaudeMd $domain $projectType
     Enable-WindowsLongPaths
-    Install-Tools -Domain $domain
+    Install-Tools -Domain $domain -Upgrade:$isReinstall
     Write-AiSherpaState -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
