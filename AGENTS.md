@@ -103,11 +103,13 @@ The test script:
 ### CLAUDE.md Rules (Three-Layer Design)
 | Layer | Location | Max Lines | Purpose |
 |---|---|---|---|
-| 1 — Global | `core/CLAUDE.md` | ~150 | Company-wide guardrails, NDA check, universal do's/don'ts |
-| 2 — Domain | `domains/<domain>/CLAUDE.md` | ~80 | Domain-specific rules (embedded, web, backend, data, devops, etc.) |
+| 1 — Global | `core/CLAUDE.md` | ~230 | Company-wide guardrails, NDA check, universal do's/don'ts, **Global Plugin & Skill Invocation Contract** |
+| 2 — Domain | `domains/<domain>/CLAUDE.md` | ~275 | Domain-specific rules (embedded, web, backend, data, devops, etc.), **Domain Plugin & Skill Invocation Contract** |
 | 3 — Project | `<project>/CLAUDE.md` (template) | ~100 | Project-specific context, stack, known issues |
 
-**Critical:** Combined total must stay under **~300 lines** to avoid Claude deprioritizing later content. Keep each layer tight and high-signal — verbose rules get ignored.
+**Critical:** Combined total must stay under **~500 lines** to avoid Claude deprioritizing later content. Keep each layer tight and high-signal — verbose rules get ignored. (Previous target was ~300 lines; raised after empirical testing showed Claude reliably honors longer files. See `docs/superpowers/specs/2026-05-29-plugin-invocation-contracts-design.md`.)
+
+**Layer 1 + Layer 2 merge at setup time.** `setup.ps1` and `setup.sh` concatenate `core/CLAUDE.md` + `domains/<chosen>/CLAUDE.md` (with a `---` separator) and write the result to `~/.claude/CLAUDE.md`. The user's installed file is the merge, not a single layer.
 
 ### Documentation
 - All docs are in **English**.
@@ -202,3 +204,42 @@ Updates core skills and settings only. **Does NOT overwrite project-specific CLA
 - Updates are distributed via Git — teams pull latest and run with `--update`.
 - Version-tagged releases allow teams to pin to a stable version.
 - `CODEOWNERS` routes all changes to `@ai-sherpa-team` for review.
+
+<!-- code-review-graph MCP tools -->
+## MCP Tools: code-review-graph
+
+**IMPORTANT: This project has a knowledge graph. ALWAYS use the
+code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
+the codebase.** The graph is faster, cheaper (fewer tokens), and gives
+you structural context (callers, dependents, test coverage) that file
+scanning cannot.
+
+### When to use graph tools FIRST
+
+- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
+- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
+- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
+- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
+- **Architecture questions**: `get_architecture_overview` + `list_communities`
+
+Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+
+### Key Tools
+
+| Tool | Use when |
+| ------ | ---------- |
+| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
+| `get_review_context` | Need source snippets for review — token-efficient |
+| `get_impact_radius` | Understanding blast radius of a change |
+| `get_affected_flows` | Finding which execution paths are impacted |
+| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
+| `semantic_search_nodes` | Finding functions/classes by name or keyword |
+| `get_architecture_overview` | Understanding high-level codebase structure |
+| `refactor_tool` | Planning renames, finding dead code |
+
+### Workflow
+
+1. The graph auto-updates on file changes (via hooks).
+2. Use `detect_changes` for code review.
+3. Use `get_affected_flows` to understand impact.
+4. Use `query_graph` pattern="tests_for" to check coverage.
