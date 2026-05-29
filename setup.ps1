@@ -532,22 +532,30 @@ function Write-ProjectSettings {
 
 function Copy-ClaudeMd {
     param([string]$Domain, [string]$ProjectType)
-    $source = "$ScriptDir\domains\$Domain\CLAUDE.md"
-    if (-not (Test-Path $source)) {
-        Write-Err "Domain CLAUDE.md not found at: $source"
+    $core   = "$ScriptDir\core\CLAUDE.md"
+    $domain = "$ScriptDir\domains\$Domain\CLAUDE.md"
+    if (-not (Test-Path $core)) {
+        Write-Err "core/CLAUDE.md not found at: $core"
+        exit 1
+    }
+    if (-not (Test-Path $domain)) {
+        Write-Err "Domain CLAUDE.md not found at: $domain"
         Write-Err "Is '$Domain' a valid domain? Valid: embedded, web, data, devops, marketing, sales, finance, service, procurement"
         exit 1
     }
     $target = "$(Get-Location)\CLAUDE.md"
+    $coreContent   = (Get-Content $core -Raw).TrimEnd()
+    $domainContent = (Get-Content $domain -Raw)
+    $merged = $coreContent + "`r`n`r`n---`r`n`r`n" + $domainContent
     if ($ProjectType -eq "existing" -and (Test-Path $target)) {
-        Write-Warn "Appending domain rules to existing CLAUDE.md (original preserved)"
+        Write-Warn "Appending AI Sherpa rules to existing CLAUDE.md (original preserved)"
         Add-Content $target "`n---"
-        Add-Content $target "<!-- AI Sherpa domain rules - do not edit below this line -->"
-        Get-Content $source | Add-Content $target
+        Add-Content $target "<!-- AI Sherpa core + $Domain rules - do not edit below this line -->"
+        Add-Content $target $merged
     } else {
-        Copy-Item $source $target -Force
+        Set-Content -Path $target -Value $merged -Encoding UTF8
     }
-    Write-Info "Domain CLAUDE.md installed at $target"
+    Write-Info "Merged core + $Domain CLAUDE.md installed at $target"
 }
 
 function Write-AiSherpaState {
@@ -575,20 +583,30 @@ function Get-AiSherpaDomain {
 
 function Write-GlobalClaudeMd {
     param([string]$Domain)
-    $source = "$ScriptDir\domains\$Domain\CLAUDE.md"
-    if (-not (Test-Path $source)) {
-        Write-Err "Domain CLAUDE.md not found at: $source"
+    $core   = "$ScriptDir\core\CLAUDE.md"
+    $domain = "$ScriptDir\domains\$Domain\CLAUDE.md"
+    if (-not (Test-Path $core)) {
+        Write-Err "core/CLAUDE.md not found at: $core"
         exit 1
     }
-    $claudeDir  = "$env:USERPROFILE\.claude"
-    $target     = "$claudeDir\CLAUDE.md"
+    if (-not (Test-Path $domain)) {
+        Write-Err "Domain CLAUDE.md not found at: $domain"
+        exit 1
+    }
+    $claudeDir = "$env:USERPROFILE\.claude"
+    $target    = "$claudeDir\CLAUDE.md"
     if (-not (Test-Path $claudeDir)) { New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null }
     if (Test-Path $target) {
         Copy-Item $target "$target.bak" -Force
         Write-Warn "Backed up existing ~/.claude/CLAUDE.md to CLAUDE.md.bak"
     }
-    Copy-Item $source $target -Force
-    Write-Info "Domain rules written to $target (active for all projects)"
+    # Merge: core rules first, then the chosen domain's rules. Universal guidance
+    # reads first, domain refines on top. Separator makes the boundary obvious.
+    $coreContent   = (Get-Content $core -Raw).TrimEnd()
+    $domainContent = (Get-Content $domain -Raw)
+    $merged = $coreContent + "`r`n`r`n---`r`n`r`n" + $domainContent
+    Set-Content -Path $target -Value $merged -Encoding UTF8
+    Write-Info "Merged core + $Domain rules written to $target (active for all projects)"
 }
 
 function Resolve-PipCommand {
