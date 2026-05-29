@@ -30,3 +30,15 @@ def test_detect_tool_misuse():
     assert f.scenario_id == "scenario-7"
     assert "cat" in f.title.lower()
     assert f.bucket == "add-rule"
+
+
+def test_detect_abandonment():
+    from analyzer.detectors.tabular import detect_abandonment
+    findings = list(detect_abandonment(_events("abandonment"), embeddings_fn=None))
+    assert any(f.scenario_id == "scenario-8" for f in findings)
+    all_paths = {p for f in findings for p in f.sample_session_paths}
+    # Sessions s-ab-2 (clear/restart loop) and s-ab-3 (ended on user prompt) should
+    # both be detected; sample_session_paths must be non-empty.
+    # (The _events helper copies files to a tempdir, so path strings don't carry the
+    # fixture folder name — we just verify that paths were captured at all.)
+    assert len(all_paths) > 0

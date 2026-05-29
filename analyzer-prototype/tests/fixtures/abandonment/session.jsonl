@@ -1,0 +1,6 @@
+{"type":"user","uuid":"u1","timestamp":"2026-05-28T10:00:00Z","sessionId":"s-ab-1","message":{"role":"user","content":"hello"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-05-28T10:00:01Z","sessionId":"s-ab-1","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-05-28T10:00:02Z","sessionId":"s-ab-2","message":{"role":"user","content":"/clear"}}
+{"type":"user","uuid":"u3","timestamp":"2026-05-28T10:00:03Z","sessionId":"s-ab-2","message":{"role":"user","content":"/clear"}}
+{"type":"user","uuid":"u4","timestamp":"2026-05-28T10:00:04Z","sessionId":"s-ab-2","message":{"role":"user","content":"/restart"}}
+{"type":"user","uuid":"u5","timestamp":"2026-05-28T10:00:05Z","sessionId":"s-ab-3","message":{"role":"user","content":"help me"}}
