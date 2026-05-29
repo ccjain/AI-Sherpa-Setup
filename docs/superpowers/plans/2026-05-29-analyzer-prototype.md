@@ -181,26 +181,36 @@ Create `analyzer-prototype/analyzer/detectors/__init__.py`:
 ALL_DETECTORS is the ordered list used by analyzer.cli to run every
 detector against the events DataFrame. Add a new scenario by appending
 its function here.
-"""
-from analyzer.detectors import tabular, embedding
 
-ALL_DETECTORS = [
-    # Tabular (no embeddings needed)
-    tabular.detect_domain_mismatch,        # scenario-3
-    tabular.detect_tool_misuse,            # scenario-7
-    tabular.detect_abandonment,            # scenario-8
-    tabular.detect_accept_then_revert,     # scenario-10
-    tabular.detect_skill_roi,              # scenario-11
-    tabular.detect_onboarding_velocity,    # scenario-12
-    tabular.detect_stale_install,          # scenario-13
-    # Embedding-based
-    embedding.detect_missed_skill_fire,    # scenario-1
-    embedding.detect_repeated_correction,  # scenario-2
-    embedding.detect_repeated_priming,     # scenario-5
-]
+The try/except below makes this file importable before the `tabular` and
+`embedding` modules exist (they are created in Tasks 3 and 5). Once those
+modules land, the import succeeds and ALL_DETECTORS populates.
+"""
+ALL_DETECTORS = []
+
+try:
+    from analyzer.detectors import tabular, embedding
+    ALL_DETECTORS = [
+        # Tabular (no embeddings needed)
+        tabular.detect_domain_mismatch,        # scenario-3
+        tabular.detect_tool_misuse,            # scenario-7
+        tabular.detect_abandonment,            # scenario-8
+        tabular.detect_accept_then_revert,     # scenario-10
+        tabular.detect_skill_roi,              # scenario-11
+        tabular.detect_onboarding_velocity,    # scenario-12
+        tabular.detect_stale_install,          # scenario-13
+        # Embedding-based
+        embedding.detect_missed_skill_fire,    # scenario-1
+        embedding.detect_repeated_correction,  # scenario-2
+        embedding.detect_repeated_priming,     # scenario-5
+    ]
+except ImportError:
+    # Detector modules not yet created. ALL_DETECTORS stays empty;
+    # the registry populates once the modules exist.
+    pass
 ```
 
-(References to `tabular.*` and `embedding.*` will be unresolved until Tasks 3 and 5. That's fine — `__init__.py` is imported lazily.)
+(Python runs `__init__.py` eagerly whenever any submodule of the package is imported. The try/except above means Tasks 3 and 5 can be implemented after Task 1 without breaking Task 1's verification step.)
 
 - [ ] **Step 8: Write `detectors/base.py`**
 
