@@ -471,17 +471,6 @@ function Resolve-PipCommand {
     return $null
 }
 
-# Prefer isolated installers (uv tool / pipx) over global pip so PyPI CLIs like
-# code-review-graph don't share their dependency env with the user's other
-# Python tools (Anaconda/Spyder, fastapi, pyopenssl, etc). Global pip is the
-# last resort because it routinely bumps shared libs and breaks pre-existing
-# installs ("starlette 1.2.0 is incompatible with fastapi 0.103.0", etc).
-function Resolve-IsolatedPyInstaller {
-    if (Test-CommandExists "uv")   { return "uv"   }   # uv tool install
-    if (Test-CommandExists "pipx") { return "pipx" }   # pipx install
-    return $null
-}
-
 function Add-WindowsUserPath {
     param([string]$Dir)
     if (-not $Dir) { return }
@@ -514,92 +503,117 @@ function Install-Python {
 function Install-PyPiTool {
     param([string]$Name, [string]$Package, [string]$PostInstall, [switch]$Upgrade)
 
-    $installer = Resolve-IsolatedPyInstaller
-    if (-not $installer) {
-        # No uv / pipx — fall back to plain pip, but warn that this shares the
-        # user's global Python env (Anaconda/Spyder/fastapi conflicts).
+    # Build the ordered list of installers to attempt. uv tool first (isolated,
+    # fast), pipx second (isolated, mature), pip --user last (shares the user's
+    # global Python env so dep conflicts are possible — warned about below).
+    # The cascade lets us recover when an earlier installer fails mid-install
+    # (e.g. uv hitting Windows ERROR_OPEN_FAILED on a deeply-nested wheel).
+    $attempts = @()
+    if (Test-CommandExists "uv")   { $attempts += 'uv'   }
+    if (Test-CommandExists "pipx") { $attempts += 'pipx' }
+
+    $pipCmd = Resolve-PipCommand
+    if (-not $pipCmd -and $attempts.Count -eq 0) {
+        if (-not (Install-Python)) { return }
         $pipCmd = Resolve-PipCommand
         if (-not $pipCmd) {
-            if (-not (Install-Python)) { return }
-            $pipCmd = Resolve-PipCommand
-            if (-not $pipCmd) {
-                Write-Warn "Python installed but pip is not yet on PATH."
-                Add-SkippedStep -Name "$Name (PyPI tool)" `
-                                -Reason "Python installed but no pip/pipx/uv on PATH in this shell" `
-                                -ManualInstall "Close and reopen the terminal, then re-run setup.bat"
-                return
-            }
-        }
-        Write-Warn "$Name will install into the global Python env ($pipCmd). For isolation, install 'uv' (https://docs.astral.sh/uv/) or 'pipx' first and re-run."
-        Write-Info "Installing $Name (pip --user$(if ($Upgrade) { ' --upgrade' }))..."
-        $pipArgs = @('install', '--quiet', '--user')
-        if ($Upgrade) { $pipArgs += '--upgrade' }
-        $pipArgs += $Package
-        & $pipCmd @pipArgs
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "$Name pip install failed (exit $LASTEXITCODE)."
+            Write-Warn "Python installed but pip is not yet on PATH."
             Add-SkippedStep -Name "$Name (PyPI tool)" `
-                            -Reason "pip install $Package failed (exit $LASTEXITCODE)" `
-                            -ManualInstall "$pipCmd install --user $Package$(if ($PostInstall) { '; ' + $PostInstall })"
+                            -Reason "Python installed but no pip/pipx/uv on PATH in this shell" `
+                            -ManualInstall "Close and reopen the terminal, then re-run setup.bat"
             return
         }
-        # pip --user puts Scripts under the user site; surface that dir to PATH
-        # so post-install and future shells can find the installed exe.
-        try {
-            $pyExe = if ($pipCmd -eq 'pip3') { 'python3' } else { 'python' }
-            $userScripts = & $pyExe -c "import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))" 2>$null
-            if ($userScripts) { Add-WindowsUserPath $userScripts }
-        } catch {}
     }
-    elseif ($installer -eq 'uv') {
-        Write-Info "Installing $Name (uv tool$(if ($Upgrade) { ' upgrade' } else { ' install' }))..."
-        if ($Upgrade) {
-            & uv tool upgrade $Package
-        } else {
-            & uv tool install $Package
-        }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "$Name uv tool install failed (exit $LASTEXITCODE)."
-            Add-SkippedStep -Name "$Name (PyPI tool)" `
-                            -Reason "uv tool install $Package failed (exit $LASTEXITCODE)" `
-                            -ManualInstall "uv tool install $Package$(if ($PostInstall) { '; ' + $PostInstall })"
-            return
-        }
-        # uv puts tool shims in %USERPROFILE%\.local\bin on Windows by default.
-        Add-WindowsUserPath "$env:USERPROFILE\.local\bin"
-    }
-    else { # pipx
-        Write-Info "Installing $Name (pipx$(if ($Upgrade) { ' upgrade' } else { ' install' }))..."
-        if ($Upgrade) {
-            & pipx upgrade $Package
-        } else {
-            & pipx install $Package
-        }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "$Name pipx install failed (exit $LASTEXITCODE)."
-            Add-SkippedStep -Name "$Name (PyPI tool)" `
-                            -Reason "pipx install $Package failed (exit $LASTEXITCODE)" `
-                            -ManualInstall "pipx install $Package$(if ($PostInstall) { '; ' + $PostInstall })"
-            return
-        }
-        Add-WindowsUserPath "$env:USERPROFILE\.local\bin"
+    if ($pipCmd) { $attempts += 'pip-user' }
+
+    if ($attempts.Count -eq 0) {
+        Add-SkippedStep -Name "$Name (PyPI tool)" `
+                        -Reason "No PyPI installer available (uv / pipx / pip all missing)" `
+                        -ManualInstall "Install 'uv' from https://docs.astral.sh/uv/, then re-run setup.bat"
+        return
     }
 
-    if ($PostInstall) {
-        Invoke-Expression $PostInstall
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "$Name post-install command failed."
-            Add-SkippedStep -Name "$Name (PyPI tool)" `
-                            -Reason "Post-install command failed: $PostInstall" `
-                            -ManualInstall $PostInstall
+    $reasons = @()
+    for ($i = 0; $i -lt $attempts.Count; $i++) {
+        $installer = $attempts[$i]
+        $ok = $false
+        switch ($installer) {
+            'uv' {
+                Write-Info "Installing $Name (uv tool$(if ($Upgrade) { ' upgrade' } else { ' install' }))..."
+                if ($Upgrade) { & uv tool upgrade $Package } else { & uv tool install $Package }
+                $ok = ($LASTEXITCODE -eq 0)
+                if ($ok) { Add-WindowsUserPath "$env:USERPROFILE\.local\bin" }
+            }
+            'pipx' {
+                Write-Info "Installing $Name (pipx$(if ($Upgrade) { ' upgrade' } else { ' install' }))..."
+                if ($Upgrade) { & pipx upgrade $Package } else { & pipx install $Package }
+                $ok = ($LASTEXITCODE -eq 0)
+                if ($ok) { Add-WindowsUserPath "$env:USERPROFILE\.local\bin" }
+            }
+            'pip-user' {
+                Write-Warn "$Name will install into the global Python env ($pipCmd --user). For isolation, install 'uv' (https://docs.astral.sh/uv/) or 'pipx' and re-run."
+                Write-Info "Installing $Name (pip --user$(if ($Upgrade) { ' --upgrade' }))..."
+                $pipArgs = @('install', '--quiet', '--user')
+                if ($Upgrade) { $pipArgs += '--upgrade' }
+                $pipArgs += $Package
+                & $pipCmd @pipArgs
+                $ok = ($LASTEXITCODE -eq 0)
+                if ($ok) {
+                    try {
+                        $pyExe = if ($pipCmd -eq 'pip3') { 'python3' } else { 'python' }
+                        $userScripts = & $pyExe -c "import site, os; print(os.path.join(site.getuserbase(), 'Scripts'))" 2>$null
+                        if ($userScripts) { Add-WindowsUserPath $userScripts }
+                    } catch {}
+                }
+            }
+        }
+
+        if ($ok) {
+            if ($PostInstall) {
+                Invoke-Expression $PostInstall
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warn "$Name post-install command failed."
+                    Add-SkippedStep -Name "$Name (PyPI tool)" `
+                                    -Reason "Post-install command failed: $PostInstall" `
+                                    -ManualInstall $PostInstall
+                    return
+                }
+            }
+            Write-Info "$Name ready."
             return
         }
+
+        $reasons += "$installer (exit $LASTEXITCODE)"
+        $global:LASTEXITCODE = 0
+        if ($i -lt $attempts.Count - 1) {
+            Write-Warn "$Name $installer install failed - retrying with next installer ($($attempts[$i + 1]))..."
+        }
     }
-    Write-Info "$Name ready."
+
+    Add-SkippedStep -Name "$Name (PyPI tool)" `
+                    -Reason "All installers failed: $($reasons -join ', ')" `
+                    -ManualInstall "Try one of: uv tool install $Package  /  pipx install $Package  /  $pipCmd install --user $Package$(if ($PostInstall) { '; ' + $PostInstall })"
+}
+
+function Test-RustInstalled {
+    if (Test-CommandExists "cargo") { return $true }
+    # cargo may exist on disk but the current shell's PATH hasn't picked it up
+    # yet — common right after a fresh rustup install, or in any shell opened
+    # before rustup ran. Reinstalling in that state triggers rustup-init's
+    # "existing settings.toml" warning and a redundant winget round-trip.
+    # Surface ~/.cargo/bin to this process and treat Rust as installed.
+    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+    $cargoExe = Join-Path $cargoBin 'cargo.exe'
+    if (Test-Path $cargoExe) {
+        Write-Info "Found cargo at $cargoExe; adding $cargoBin to PATH for this run."
+        $env:Path = $env:Path + ';' + $cargoBin
+        return $true
+    }
+    return $false
 }
 
 function Install-Rust {
-    if (Test-CommandExists "cargo") {
+    if (Test-RustInstalled) {
         # cargo is present but may be from an outdated toolchain. Several crates
         # we install (rtk uses str.floor_char_boundary, stabilized in Rust 1.80)
         # fail to compile on old stable channels with "unstable library feature"

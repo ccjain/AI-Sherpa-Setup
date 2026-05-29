@@ -595,44 +595,66 @@ install_pypi_tool() {
 
   local upgrade_flag=""
   [[ "$upgrade" == "true" ]] && upgrade_flag="--upgrade"
-  # Prefer isolated installers (uv tool / pipx) so PyPI CLIs like
-  # code-review-graph don't share their dependency env with the user's other
-  # Python tools. Falls back to bare pip only when nothing better is on PATH.
-  if check_command uv; then
+
+  # Cascade across available installers in preference order: uv tool (isolated,
+  # fast) -> pipx (isolated, mature; auto-installed on Linux via ensure_pipx)
+  # -> bare pip (shares global env, warned). When one fails mid-install (e.g.
+  # uv hitting ERROR_OPEN_FAILED on Windows long-path wheels), fall through to
+  # the next instead of skipping the step entirely.
+  local install_ok=false
+  local last_err=""
+
+  if ! $install_ok && check_command uv; then
     local uv_action="install"
     [[ "$upgrade" == "true" ]] && uv_action="upgrade"
     log_info "Installing $name (uv tool $uv_action)..."
-    if ! uv tool "$uv_action" "$package"; then
-      add_skipped_step "$name (PyPI tool)" "uv tool $uv_action $package failed" \
-        "uv tool $uv_action $package${post_install:+ && $post_install}"
-      return
+    if uv tool "$uv_action" "$package"; then
+      export PATH="$HOME/.local/bin:$PATH"
+      install_ok=true
+    else
+      last_err="uv tool $uv_action failed"
+      log_warn "$name uv tool $uv_action failed - retrying with next installer..."
     fi
-    export PATH="$HOME/.local/bin:$PATH"
-  elif [[ "$OSTYPE" == "darwin"* ]] && ! check_command pipx; then
+  fi
+
+  if ! $install_ok; then
+    local have_pipx=false
+    if check_command pipx; then
+      have_pipx=true
+    elif [[ "$OSTYPE" != "darwin"* ]]; then
+      # On Linux ensure_pipx will auto-install pipx if missing (PEP 668-safe path).
+      ensure_pipx && have_pipx=true
+    fi
+    if $have_pipx; then
+      export PATH="$HOME/.local/bin:$PATH"
+      local pipx_action="install"
+      if [[ "$upgrade" == "true" ]] && pipx list 2>/dev/null | grep -q "package $package "; then
+        pipx_action="upgrade"
+      fi
+      log_info "Installing $name (pipx $pipx_action)..."
+      if pipx "$pipx_action" "$package"; then
+        install_ok=true
+      else
+        last_err="pipx $pipx_action failed"
+        log_warn "$name pipx $pipx_action failed - retrying with next installer..."
+      fi
+    fi
+  fi
+
+  if ! $install_ok; then
     log_warn "$name will install into the global Python env ($pip_cmd). For isolation, install 'uv' (https://docs.astral.sh/uv/) or 'pipx' first and re-run."
     log_info "Installing $name (pip${upgrade_flag:+ $upgrade_flag})..."
-    if ! "$pip_cmd" install --quiet $upgrade_flag "$package"; then
-      add_skipped_step "$name (PyPI tool)" "pip install $package failed" \
-        "$pip_cmd install $package${post_install:+ && $post_install}"
-      return
+    if "$pip_cmd" install --quiet $upgrade_flag "$package"; then
+      install_ok=true
+    else
+      last_err="pip install failed"
     fi
-  else
-    if ! ensure_pipx; then
-      add_skipped_step "$name (PyPI tool)" "pipx required on PEP 668 but install failed" \
-        "sudo apt-get install -y pipx && pipx install $package${post_install:+ && $post_install}"
-      return
-    fi
-    export PATH="$HOME/.local/bin:$PATH"
-    # pipx upgrade vs install — pipx errors on re-install
-    local pipx_action="install"
-    if [[ "$upgrade" == "true" ]] && pipx list 2>/dev/null | grep -q "package $package "; then
-      pipx_action="upgrade"
-    fi
-    if ! pipx "$pipx_action" "$package"; then
-      add_skipped_step "$name (PyPI tool)" "pipx $pipx_action $package failed" \
-        "pipx $pipx_action $package${post_install:+ && $post_install}"
-      return
-    fi
+  fi
+
+  if ! $install_ok; then
+    add_skipped_step "$name (PyPI tool)" "All installers failed (last: $last_err)" \
+      "Try one of: uv tool install $package  /  pipx install $package  /  $pip_cmd install --user $package${post_install:+ ; $post_install}"
+    return
   fi
 
   if [[ -n "$post_install" ]]; then
@@ -645,6 +667,15 @@ install_pypi_tool() {
 }
 
 install_rust() {
+  # cargo may exist on disk but the current shell's PATH hasn't picked it up
+  # yet — common right after a fresh rustup install, or in any shell opened
+  # before rustup ran. Surface ~/.cargo/bin to this process before deciding
+  # to reinstall, so we don't redundantly re-run the installer.
+  if ! check_command cargo && [[ -x "$HOME/.cargo/bin/cargo" ]]; then
+    log_info "Found cargo at ~/.cargo/bin/cargo; adding to PATH for this run."
+    export PATH="$HOME/.cargo/bin:$PATH"
+  fi
+
   if check_command cargo; then
     # cargo is present but may be from an outdated toolchain. Several crates
     # we install (rtk uses str.floor_char_boundary, stabilized in Rust 1.80)
