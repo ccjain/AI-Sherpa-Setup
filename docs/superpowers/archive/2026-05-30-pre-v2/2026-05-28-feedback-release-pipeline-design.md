@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-05-30.** Superseded by [docs/superpowers/2026-05-30-program-v2.md](../../2026-05-30-program-v2.md).
+> Preserved for historical context. Not authoritative. Do not cite.
+
 # AI Sherpa — Feedback & Release Pipeline Design
 
 **Date:** 2026-05-28

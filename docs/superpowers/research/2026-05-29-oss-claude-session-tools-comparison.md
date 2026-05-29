@@ -1,3 +1,6 @@
+> **SUPERSEDED 2026-05-30.** This narrow comparison covered 2 tools. See [`2026-05-30-oss-landscape.md`](2026-05-30-oss-landscape.md) for the broader survey of ~40 OSS projects across direct competitors, LLM observability, telemetry collection, and the AI-rules ecosystem.
+> Preserved as the original methodology record. Not authoritative for build-vs-adopt decisions.
+
 # OSS Claude Code Session Tools — Comparison & Adoption Recommendations
 
 **Date:** 2026-05-29

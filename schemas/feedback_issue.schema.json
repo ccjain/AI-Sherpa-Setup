@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/<org>/ai-sherpa/schemas/feedback_issue.schema.json",
+  "title": "AI Sherpa feedback Issue body — structured payload",
+  "description": "The canonical shape of the structured payload embedded in every feedback Issue body. Produced by either the /ai-sherpa-feedback slash command (source=manual) or the Gate E auto-filer (source=telemetry). Serialized as a single fenced JSON code block at the top of the Issue body OR as a hidden HTML comment; consumers must accept either. See docs/superpowers/2026-05-30-program-v2.md §3.3.",
+  "type": "object",
+  "required": ["schema_version", "source", "environment", "labels"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Schema version. Bump on non-backward-compatible changes only."
+    },
+    "source": {
+      "enum": ["manual", "telemetry"],
+      "description": "Which path produced this Issue. Manual = developer typed /ai-sherpa-feedback. Telemetry = Gate E Scorer Registry auto-filer."
+    },
+    "session_ref": {
+      "type": "object",
+      "description": "Triage-pivot contract: the link from this Issue to the Claude Code session(s) that prompted it. STRONGLY RECOMMENDED for manual; REQUIRED for telemetry. Without this, triage is hand-waving (see v2 §3.3).",
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "Claude Code session ID. From $env:CLAUDE_SESSION_ID at slash-command invocation, or from the SessionEnd hook context for auto-filed Issues."
+        },
+        "trace_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Langfuse deep-link to the trace. Populated post-Gate E; empty before."
+        },
+        "project_path": {
+          "type": "string",
+          "description": "Relative project path with home-dir scrubbed. e.g. '<home>/firmware/sensor-board' not '/Users/jane/firmware/sensor-board'."
+        },
+        "sample_session_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 5,
+          "description": "For telemetry-sourced findings citing multiple sessions. Capped at 5 to avoid Issue-body bloat."
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": ["ai_sherpa_version", "os", "domain"],
+      "additionalProperties": false,
+      "properties": {
+        "ai_sherpa_version": {
+          "type": "string",
+          "pattern": "^v\\d{4}\\.\\d{2}\\.\\d{2}$",
+          "description": "CalVer release tag the developer is running. e.g. v2026.06.01"
+        },
+        "os": {
+          "type": "string",
+          "examples": ["Windows 11", "macOS 14", "Ubuntu 22.04 (WSL)"]
+        },
+        "domain": {
+          "type": "string",
+          "description": "Configured domain. Must be a value listed in schemas/label_taxonomy.yml under namespaces.domain.values."
+        },
+        "active_plugins": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "active_skills": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "complaint": {
+      "type": "object",
+      "description": "Required when source=manual. The four-question content from the slash command.",
+      "additionalProperties": false,
+      "properties": {
+        "what_did_you_ask": { "type": "string" },
+        "what_did_claude_do": { "type": "string" },
+        "what_should_it_have_done": { "type": "string" },
+        "rule_violated": {
+          "type": "string",
+          "description": "Optional. Name of CLAUDE.md rule the developer believes was violated, if known."
+        }
+      },
+      "required": ["what_did_you_ask", "what_did_claude_do", "what_should_it_have_done"]
+    },
+    "finding": {
+      "type": "object",
+      "description": "Required when source=telemetry. Produced by a Scorer in the Gate E registry.",
+      "additionalProperties": false,
+      "properties": {
+        "scorer_id": {
+          "type": "string",
+          "description": "Stable identifier of the Scorer that produced this finding. e.g. 'rule_no_malloc_in_isr'."
+        },
+        "scorer_version": {
+          "type": "string",
+          "description": "Version of the Scorer at finding time. Enables regression bisection per v2 §5.7."
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence": {
+          "enum": ["low", "medium", "high"]
+        },
+        "contributing_developers_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "evidence_summary": {
+          "type": "string",
+          "description": "PII-scrubbed prose summary suitable for human review. Must NOT contain developer names, file paths outside the relative-project-path convention, or any string matching the privacy regex set in scorers/<rule>/privacy_test.json."
+        },
+        "fingerprint": {
+          "type": "string",
+          "description": "Deterministic dedup key. v2 §9 prescribes: scorer_id + domain + sorted top-N contributing developer hashes. Same fingerprint = same underlying pattern; auto-filer must not file twice."
+        }
+      },
+      "required": ["scorer_id", "scorer_version", "score", "confidence", "contributing_developers_count", "evidence_summary", "fingerprint"]
+    },
+    "labels": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Initial labels to apply. Must include at least one source/*, one domain/*, one type/*, one severity/* per schemas/label_taxonomy.yml. status/* is set by triage workflow, not by the producer."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "source": { "const": "manual" } } },
+      "then": { "required": ["complaint"] }
+    },
+    {
+      "if": { "properties": { "source": { "const": "telemetry" } } },
+      "then": { "required": ["finding", "session_ref"] }
+    }
+  ]
+}

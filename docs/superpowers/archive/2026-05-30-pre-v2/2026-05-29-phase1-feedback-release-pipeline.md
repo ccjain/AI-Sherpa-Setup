@@ -1,3 +1,6 @@
+> **ARCHIVED 2026-05-30.** Superseded by [docs/superpowers/2026-05-30-program-v2.md](../../2026-05-30-program-v2.md).
+> Preserved for historical context. Not authoritative. Do not cite.
+
 # Phase 1 Feedback & Release Pipeline Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
