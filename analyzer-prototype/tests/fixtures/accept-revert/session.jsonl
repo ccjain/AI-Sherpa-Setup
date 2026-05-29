@@ -1,0 +1,12 @@
+{"type":"assistant","uuid":"a1","timestamp":"2026-05-28T10:00:00Z","sessionId":"s-ar-1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"/tmp/foo.py","old_string":"a","new_string":"b"}}]}}
+{"type":"user","uuid":"u1","timestamp":"2026-05-28T10:00:01Z","sessionId":"s-ar-1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-05-28T10:00:05Z","sessionId":"s-ar-1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/tmp/foo.py","old_string":"b","new_string":"c"}}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-05-28T10:00:06Z","sessionId":"s-ar-1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]}}
+{"type":"assistant","uuid":"a3","timestamp":"2026-05-28T10:00:00Z","sessionId":"s-ar-2","message":{"role":"assistant","content":[{"type":"tool_use","id":"t3","name":"Edit","input":{"file_path":"/tmp/bar.py","old_string":"a","new_string":"b"}}]}}
+{"type":"user","uuid":"u3","timestamp":"2026-05-28T10:00:01Z","sessionId":"s-ar-2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":"ok"}]}}
+{"type":"assistant","uuid":"a4","timestamp":"2026-05-28T10:00:10Z","sessionId":"s-ar-2","message":{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"Edit","input":{"file_path":"/tmp/bar.py","old_string":"b","new_string":"c"}}]}}
+{"type":"user","uuid":"u4","timestamp":"2026-05-28T10:00:11Z","sessionId":"s-ar-2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"ok"}]}}
+{"type":"assistant","uuid":"a5","timestamp":"2026-05-28T10:00:00Z","sessionId":"s-ar-3","message":{"role":"assistant","content":[{"type":"tool_use","id":"t5","name":"Edit","input":{"file_path":"/tmp/baz.py","old_string":"a","new_string":"b"}}]}}
+{"type":"user","uuid":"u5","timestamp":"2026-05-28T10:00:01Z","sessionId":"s-ar-3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t5","content":"ok"}]}}
+{"type":"assistant","uuid":"a6","timestamp":"2026-05-28T10:00:30Z","sessionId":"s-ar-3","message":{"role":"assistant","content":[{"type":"tool_use","id":"t6","name":"Edit","input":{"file_path":"/tmp/baz.py","old_string":"b","new_string":"c"}}]}}
+{"type":"user","uuid":"u6","timestamp":"2026-05-28T10:00:31Z","sessionId":"s-ar-3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t6","content":"ok"}]}}

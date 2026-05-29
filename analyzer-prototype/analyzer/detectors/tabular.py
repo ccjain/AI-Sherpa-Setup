@@ -89,3 +89,55 @@ def detect_abandonment(events: pd.DataFrame, embeddings_fn=None) -> Iterable[Fin
     )]
 
 detect_abandonment.id = "scenario-8"
+
+
+def detect_accept_then_revert(events: pd.DataFrame, embeddings_fn=None) -> Iterable[Finding]:
+    if events.empty:
+        return []
+    import json
+    edits = events[
+        (events.event_type == "tool_call") & events.tool_name.isin(["Edit", "Write"])
+    ].copy()
+    if edits.empty:
+        return []
+    edits = edits.sort_values(["session_id", "timestamp"]).reset_index(drop=True)
+
+    # Parse file_path out of tool_args_json.
+    edits["file_path"] = edits.tool_args_json.apply(
+        lambda j: (json.loads(j).get("file_path") if isinstance(j, str) else None)
+    )
+
+    revert_pairs = 0
+    sample_paths: list[str] = []
+    for _, group in edits.groupby(["session_id", "file_path"]):
+        group = group.sort_values("timestamp")
+        if len(group) < 2:
+            continue
+        ts = group.timestamp.tolist()
+        for i in range(len(ts) - 1):
+            if (ts[i + 1] - ts[i]).total_seconds() <= 60:
+                revert_pairs += 1
+                sample_paths.append(group.session_path.iloc[0])
+
+    if revert_pairs < 3:
+        return []
+
+    return [Finding(
+        scenario_id="scenario-10",
+        title=f"{revert_pairs} accept-then-revert edit pairs detected",
+        bucket="refine-rule",
+        domain=None,
+        severity="normal",
+        confidence="high" if revert_pairs >= 10 else "medium",
+        evidence_md=(
+            f"**{revert_pairs} cases** where the same file was edited again "
+            f"within 60 seconds of the previous edit. This pattern indicates "
+            f"Claude was close but not quite right, and the user finished the "
+            f"job manually.\n\n"
+            f"**Suggested change:** sample these sessions; if there's a recurring "
+            f"pattern in what Claude got almost-right, refine the relevant rule."
+        ),
+        sample_session_paths=list(dict.fromkeys(sample_paths))[:5],
+    )]
+
+detect_accept_then_revert.id = "scenario-10"

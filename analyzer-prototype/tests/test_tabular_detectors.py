@@ -42,3 +42,9 @@ def test_detect_abandonment():
     # (The _events helper copies files to a tempdir, so path strings don't carry the
     # fixture folder name — we just verify that paths were captured at all.)
     assert len(all_paths) > 0
+
+
+def test_detect_accept_then_revert():
+    from analyzer.detectors.tabular import detect_accept_then_revert
+    findings = list(detect_accept_then_revert(_events("accept-revert"), embeddings_fn=None))
+    assert any(f.scenario_id == "scenario-10" for f in findings)
