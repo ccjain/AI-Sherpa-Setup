@@ -26,3 +26,18 @@ def test_render_markdown_files_orders_by_severity_then_scenario(tmp_path):
     # Filenames are 001-, 002-, 003- — first should be the critical finding.
     first = written[0].read_text()
     assert "Severity:** critical" in first
+
+
+def test_render_html_summary_emits_valid_html(tmp_path):
+    findings = [_finding("high"), _finding("low")]
+    written = render_markdown_files(findings, tmp_path)
+    from analyzer.render import render_html_summary
+    html_path = render_html_summary(
+        findings, tmp_path,
+        input_path="/tmp/fake", session_count=42,
+        written_paths=written,
+    )
+    body = html_path.read_text()
+    assert "<table" in body
+    assert "scenario-7" in body
+    assert "42 sessions analyzed" in body
