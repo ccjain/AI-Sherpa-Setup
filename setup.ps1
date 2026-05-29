@@ -17,9 +17,14 @@ try {
     $OutputEncoding = [System.Text.Encoding]::UTF8
 } catch {}
 
-function Write-Info { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Green }
-function Write-Warn { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Yellow }
-function Write-Err  { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Red }
+function Write-Info   { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Green }
+function Write-Warn   { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Yellow }
+function Write-Err    { param([string]$msg) Write-Host "[AI Sherpa] $msg" -ForegroundColor Red }
+# Visually-distinct level for "the user must do X themselves before this tool
+# works." Plain Write-Warn is too easy to scroll past during a noisy install;
+# user-action lines get magenta + an explicit prefix, AND get collected into
+# Show-UserActionsReport so they're surfaced again at the end of the run.
+function Write-Action { param([string]$msg) Write-Host "[ACTION REQUIRED] $msg" -ForegroundColor Magenta }
 
 function Show-Logo {
     # PowerShell 5.1 console may default to a code page that mangles UTF-8 box-
@@ -53,6 +58,34 @@ $script:InstallFailures = @()
 function Add-InstallFailure {
     param([string]$Key)
     $script:InstallFailures += $Key
+}
+
+# Things the user MUST do themselves before the tool works (close terminal,
+# install a prereq, enable a Windows feature, run a manual command). These get
+# surfaced TWICE: inline via Write-Action when discovered, and again in a
+# prominent end-of-run report (Show-UserActionsReport) so a noisy install can't
+# bury them.
+$script:UserActions = @()
+function Add-UserAction {
+    param([string]$Title, [string]$Why, [string]$Command)
+    $script:UserActions += [pscustomobject]@{ Title = $Title; Why = $Why; Command = $Command }
+}
+function Show-UserActionsReport {
+    if ($script:UserActions.Count -eq 0) { return }
+    Write-Host ""
+    Write-Host "==========================================================" -ForegroundColor Magenta
+    Write-Host "  ACTION REQUIRED ($($script:UserActions.Count))" -ForegroundColor Magenta
+    Write-Host "  Setup is done, but these need YOU before the tool works:" -ForegroundColor Magenta
+    Write-Host "==========================================================" -ForegroundColor Magenta
+    $i = 1
+    foreach ($a in $script:UserActions) {
+        Write-Host ""
+        Write-Host "  $i. $($a.Title)" -ForegroundColor Magenta
+        if ($a.Why)     { Write-Host "     Why: $($a.Why)" }
+        if ($a.Command) { Write-Host "     Run: $($a.Command)" -ForegroundColor White }
+        $i++
+    }
+    Write-Host ""
 }
 function Show-SkippedStepsReport {
     if ($script:SkippedSteps.Count -eq 0) { return }
@@ -126,8 +159,11 @@ function Install-NodeJS {
         Update-PathFromRegistry
         $current = Get-ToolVersion 'node'
         if (-not $current) {
-            Write-Err "Node.js installed but 'node' is not on PATH in this shell."
-            Write-Err "Close and reopen this terminal, then re-run. Minimum required: Node.js $min."
+            Write-Action "Node.js installed but 'node' isn't on PATH in this shell."
+            Add-UserAction -Title "Make Node.js visible to this shell" `
+                           -Why "winget installed Node, but this PowerShell session's PATH was captured before that — `node` won't resolve until you start a fresh shell. Minimum required: Node.js $min." `
+                           -Command "Close this terminal, open a new one, then re-run: setup.bat"
+            Show-UserActionsReport
             exit 1
         }
     }
@@ -162,8 +198,11 @@ function Install-Git {
         Update-PathFromRegistry
         $current = Get-ToolVersion 'git'
         if (-not $current) {
-            Write-Err "Git installed but 'git' is not on PATH in this shell."
-            Write-Err "Close and reopen this terminal, then re-run. Minimum required: Git $min."
+            Write-Action "Git installed but 'git' isn't on PATH in this shell."
+            Add-UserAction -Title "Make Git visible to this shell" `
+                           -Why "winget installed Git, but this PowerShell session's PATH was captured before that — `git` won't resolve until you start a fresh shell. Minimum required: Git $min." `
+                           -Command "Close this terminal, open a new one, then re-run: setup.bat"
+            Show-UserActionsReport
             exit 1
         }
     }
@@ -471,6 +510,56 @@ function Resolve-PipCommand {
     return $null
 }
 
+# Windows ships with a legacy 260-char MAX_PATH limit that breaks modern dev
+# tooling. uv unpacks wheels into deeply-nested cache dirs (e.g.
+# %USERPROFILE%\AppData\Local\uv\cache\...\jsonschema\referencing\...) which
+# routinely blow past 260 chars and fail with ERROR_OPEN_FAILED (-2147024786).
+# Enabling LongPathsEnabled is a one-time machine-wide registry flip that makes
+# Win32 path APIs accept paths up to ~32k chars. We try to set it ourselves
+# when running elevated; if not, we tell the user the exact elevated command
+# rather than silently letting their next install fail.
+function Test-WindowsLongPathsEnabled {
+    try {
+        $val = Get-ItemPropertyValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+                                     -Name 'LongPathsEnabled' -ErrorAction Stop
+        return ($val -eq 1)
+    } catch { return $false }
+}
+
+function Test-IsAdmin {
+    try {
+        $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $p  = New-Object System.Security.Principal.WindowsPrincipal($id)
+        return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { return $false }
+}
+
+function Enable-WindowsLongPaths {
+    if (Test-WindowsLongPathsEnabled) {
+        Write-Info "Windows long-path support already enabled."
+        return
+    }
+    if (Test-IsAdmin) {
+        try {
+            New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+                             -Name 'LongPathsEnabled' -Value 1 -PropertyType DWORD -Force | Out-Null
+            Write-Info "Enabled Windows long-path support (LongPathsEnabled = 1)."
+        } catch {
+            Write-Action "Could not enable Windows long-path support automatically: $($_.Exception.Message)"
+            Add-UserAction -Title "Enable Windows long-path support" `
+                           -Why "Without this, uv / pip can fail mid-install with 'cannot open file' on deeply-nested wheels (jsonschema, email_validator, etc)." `
+                           -Command "Open an ADMIN PowerShell and run: New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -Value 1 -PropertyType DWORD -Force"
+        }
+        return
+    }
+    # Not elevated — surface as an explicit action.
+    Write-Action "Windows long-path support is NOT enabled, and this shell isn't elevated so setup can't flip it."
+    Write-Action "uv / pip installs may fail later with 'cannot open file' (ERROR_OPEN_FAILED) on deeply-nested wheels."
+    Add-UserAction -Title "Enable Windows long-path support" `
+                   -Why "Without this, uv / pip can fail mid-install with 'cannot open file' on deeply-nested wheels (jsonschema, email_validator, etc). The setup will still try alternate installers, but enabling this once fixes the root cause." `
+                   -Command "Open an ADMIN PowerShell and run: New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -Value 1 -PropertyType DWORD -Force"
+}
+
 function Add-WindowsUserPath {
     param([string]$Dir)
     if (-not $Dir) { return }
@@ -613,11 +702,11 @@ function Install-PyPiTool {
                 $postFindable = -not [string]::IsNullOrEmpty($postFirstWord) `
                                 -and ($null -ne (Get-Command $postFirstWord -ErrorAction SilentlyContinue))
                 if (-not $postFindable) {
-                    Write-Warn "$Name installed but '$postFirstWord' is not on PATH in this shell — deferring post-install."
-                    Add-SkippedStep -Name "$Name (post-install)" `
-                                    -Reason "'$postFirstWord' not on PATH in current shell after install" `
-                                    -ManualInstall "Close and reopen the terminal so PATH refreshes, then run: $PostInstall"
-                    Write-Info "$Name installed (post-install deferred — see report above)."
+                    Write-Action "$Name installed but '$postFirstWord' isn't on PATH in this shell yet — deferring post-install."
+                    Add-UserAction -Title "Finish $Name setup" `
+                                   -Why "$Name was installed via $installer but the binary's directory wasn't on PATH in this shell — the post-install step couldn't run. After a fresh shell opens with the updated PATH, this one command finishes wiring it up." `
+                                   -Command "Close and reopen the terminal, then run: $PostInstall"
+                    Write-Info "$Name installed (post-install deferred — see ACTION REQUIRED at end of setup)."
                     return
                 }
                 Invoke-Expression $PostInstall
@@ -1136,17 +1225,20 @@ if ($domain -eq "embedded") {
 if ($isUserLevelRun) {
     # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
     Write-GlobalClaudeMd $domain
+    Enable-WindowsLongPaths
     Install-Tools -Domain $domain
     Write-AiSherpaState -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing
         Show-SkippedStepsReport
+        Show-UserActionsReport
         Print-Summary $domain -UserLevel
         exit 1
     }
     Write-Info "All expected plugins verified in installed_plugins.json."
     Show-SkippedStepsReport
+    Show-UserActionsReport
     Print-Summary $domain -UserLevel
 } else {
     # Project-level: write CLAUDE.md and settings into current project directory
@@ -1164,16 +1256,19 @@ if ($isUserLevelRun) {
     $projectType = $ptMap[$projectChoice]
     Write-ProjectSettings
     Copy-ClaudeMd $domain $projectType
+    Enable-WindowsLongPaths
     Install-Tools -Domain $domain
     Write-AiSherpaState -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing
         Show-SkippedStepsReport
+        Show-UserActionsReport
         Print-Summary $domain
         exit 1
     }
     Write-Info "All expected plugins verified in installed_plugins.json."
     Show-SkippedStepsReport
+    Show-UserActionsReport
     Print-Summary $domain
 }

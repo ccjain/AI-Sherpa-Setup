@@ -12,10 +12,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; DIM='\033[2;37m'; NC='\033[0m'
-log_info()  { echo -e "${GREEN}[AI Sherpa]${NC} $1"; }
-log_warn()  { echo -e "${YELLOW}[AI Sherpa]${NC} $1"; }
-log_error() { echo -e "${RED}[AI Sherpa]${NC} $1"; }
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; DIM='\033[2;37m'; MAGENTA='\033[1;35m'; NC='\033[0m'
+log_info()   { echo -e "${GREEN}[AI Sherpa]${NC} $1"; }
+log_warn()   { echo -e "${YELLOW}[AI Sherpa]${NC} $1"; }
+log_error()  { echo -e "${RED}[AI Sherpa]${NC} $1"; }
+# Visually-distinct level for "the user must do X themselves before this tool
+# works." Plain log_warn is too easy to scroll past during a noisy install;
+# action lines get magenta + explicit prefix, AND are collected into
+# show_user_actions_report so they're surfaced again at the end of the run.
+log_action() { echo -e "${MAGENTA}[ACTION REQUIRED]${NC} $1"; }
 
 print_logo() {
   # Use printf with %s so the body strings (which contain literal backslashes)
@@ -44,6 +49,37 @@ INSTALL_FAILURES=()
 add_install_failure() {
   INSTALL_FAILURES+=("$1")
 }
+
+# Things the user MUST do themselves before the tool works (open a new shell,
+# install a prereq, enable a system feature, run a manual command). These are
+# surfaced TWICE: inline via log_action when discovered, and again in
+# show_user_actions_report at the end so a noisy install can't bury them.
+USER_ACTIONS=()
+add_user_action() {
+  # args: title | why | command
+  USER_ACTIONS+=("$1|$2|$3")
+}
+show_user_actions_report() {
+  if [[ ${#USER_ACTIONS[@]} -eq 0 ]]; then return; fi
+  echo ""
+  echo -e "${MAGENTA}==========================================================${NC}"
+  echo -e "${MAGENTA}  ACTION REQUIRED (${#USER_ACTIONS[@]})${NC}"
+  echo -e "${MAGENTA}  Setup is done, but these need YOU before the tool works:${NC}"
+  echo -e "${MAGENTA}==========================================================${NC}"
+  local i=1
+  for entry in "${USER_ACTIONS[@]}"; do
+    IFS='|' read -r title why cmd <<< "$entry"
+    echo ""
+    echo -e "${MAGENTA}  $i. $title${NC}"
+    [[ -n "$why" ]] && echo "     Why: $why"
+    [[ -n "$cmd" ]] && echo -e "     Run: ${NC}$cmd"
+    i=$((i + 1))
+  done
+  echo ""
+  echo -e "${MAGENTA}==========================================================${NC}"
+  echo ""
+}
+
 show_skipped_steps_report() {
   if [[ ${#SKIPPED_STEPS[@]} -eq 0 ]]; then return; fi
   echo ""
@@ -665,11 +701,11 @@ install_pypi_tool() {
     local post_first
     post_first=$(echo "$post_install" | awk '{print $1}')
     if [[ -n "$post_first" ]] && ! check_command "$post_first"; then
-      log_warn "$name installed but '$post_first' is not on PATH in this shell - deferring post-install."
-      add_skipped_step "$name (post-install)" \
-        "'$post_first' not on PATH in current shell after install" \
-        "Open a new shell so PATH refreshes, then run: $post_install"
-      log_info "$name installed (post-install deferred - see report above)."
+      log_action "$name installed but '$post_first' isn't on PATH in this shell yet - deferring post-install."
+      add_user_action "Finish $name setup" \
+        "$name was installed but the binary's directory isn't on PATH in this shell - the post-install step couldn't run. After a fresh shell opens with the updated PATH, this one command finishes wiring it up." \
+        "Open a new shell, then run: $post_install"
+      log_info "$name installed (post-install deferred - see ACTION REQUIRED at end of setup)."
       return
     fi
     if ! eval "$post_install"; then
@@ -1296,11 +1332,13 @@ main() {
   if [[ -n "$missing" ]]; then
     show_verification_report "$missing"
     show_skipped_steps_report
+    show_user_actions_report
     print_summary "$domain" "$is_user_level"
     exit 1
   fi
   log_info "All expected plugins verified in installed_plugins.json."
   show_skipped_steps_report
+  show_user_actions_report
   print_summary "$domain" "$is_user_level"
 }
 
