@@ -77,41 +77,139 @@ function Test-CommandExists {
     return ($null -ne (Get-Command $Name -ErrorAction SilentlyContinue))
 }
 
-function Install-NodeJS {
-    if (-not (Test-CommandExists "node")) {
-        Write-Info "Node.js not found. Installing via winget..."
-        winget install OpenJS.NodeJS --silent --accept-package-agreements --accept-source-agreements
-        if ($LASTEXITCODE -ne 0) { Write-Err "winget failed to install Node.js (exit $LASTEXITCODE). Install manually from https://nodejs.org then re-run."; exit 1 }
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
-                    [System.Environment]::GetEnvironmentVariable("Path","User")
-        Write-Info "Node.js installed. If 'node' is still not found, close and reopen this terminal."
-    } else {
-        Write-Info "Node.js $(node --version) found."
+# Minimum versions required by AI Sherpa. Bumping these here is the single
+# source of truth — Install-NodeJS / Install-Git / Install-ClaudeCode all
+# read from this table and enforce it.
+#   node   18.0.0  -> Claude Code requirement (per Anthropic docs)
+#   git    2.30.0  -> safe modern baseline; covers `git clone --depth`, partial-clone, etc.
+#   claude 2.0.0   -> introduces the plugin system + `--scope` flag used by Install-Plugin
+$script:MinVersions = @{
+    node   = [version]'18.0.0'
+    git    = [version]'2.30.0'
+    claude = [version]'2.0.0'
+}
+
+function Get-VersionFromString {
+    param([string]$Text)
+    if (-not $Text) { return $null }
+    if ($Text -match '(\d+)\.(\d+)\.(\d+)') {
+        return [version]("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
     }
+    return $null
+}
+
+function Get-ToolVersion {
+    param([string]$Cmd, [string]$Arg = '--version')
+    if (-not (Test-CommandExists $Cmd)) { return $null }
+    try {
+        $out = & $Cmd $Arg 2>&1 | Out-String
+        return (Get-VersionFromString $out)
+    } catch { return $null }
+}
+
+function Update-PathFromRegistry {
+    $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
+                [System.Environment]::GetEnvironmentVariable('Path','User')
+}
+
+function Install-NodeJS {
+    $min = $script:MinVersions.node
+    $current = Get-ToolVersion 'node'
+    if (-not $current) {
+        Write-Info "Node.js not found. Installing via winget (minimum required: $min)..."
+        winget install OpenJS.NodeJS --silent --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "winget failed to install Node.js (exit $LASTEXITCODE)."
+            Write-Err "Minimum required: Node.js $min. Install manually from https://nodejs.org and re-run."
+            exit 1
+        }
+        Update-PathFromRegistry
+        $current = Get-ToolVersion 'node'
+        if (-not $current) {
+            Write-Err "Node.js installed but 'node' is not on PATH in this shell."
+            Write-Err "Close and reopen this terminal, then re-run. Minimum required: Node.js $min."
+            exit 1
+        }
+    }
+    if ($current -lt $min) {
+        Write-Warn "Node.js $current is below minimum $min. Attempting winget upgrade..."
+        winget upgrade OpenJS.NodeJS --silent --accept-package-agreements --accept-source-agreements
+        # Tolerate non-zero exit: "no upgrade available" / "package not installed by winget"
+        # are both reported as failures but aren't fatal — re-check the version instead.
+        $global:LASTEXITCODE = 0
+        Update-PathFromRegistry
+        $current = Get-ToolVersion 'node'
+        if (-not $current -or $current -lt $min) {
+            Write-Err "Node.js is $current (below minimum $min) and auto-upgrade did not bump it."
+            Write-Err "Upgrade manually from https://nodejs.org/en/download and re-run setup."
+            exit 1
+        }
+    }
+    Write-Info "Node.js $current OK (>= $min)."
 }
 
 function Install-Git {
-    if (-not (Test-CommandExists "git")) {
-        Write-Info "Git not found. Installing via winget..."
+    $min = $script:MinVersions.git
+    $current = Get-ToolVersion 'git'
+    if (-not $current) {
+        Write-Info "Git not found. Installing via winget (minimum required: $min)..."
         winget install Git.Git --silent --accept-package-agreements --accept-source-agreements
-        if ($LASTEXITCODE -ne 0) { Write-Err "winget failed to install Git (exit $LASTEXITCODE). Install manually from https://git-scm.com then re-run."; exit 1 }
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
-                    [System.Environment]::GetEnvironmentVariable("Path","User")
-        Write-Info "Git installed."
-    } else {
-        Write-Info "Git $(git --version) found."
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "winget failed to install Git (exit $LASTEXITCODE)."
+            Write-Err "Minimum required: Git $min. Install manually from https://git-scm.com and re-run."
+            exit 1
+        }
+        Update-PathFromRegistry
+        $current = Get-ToolVersion 'git'
+        if (-not $current) {
+            Write-Err "Git installed but 'git' is not on PATH in this shell."
+            Write-Err "Close and reopen this terminal, then re-run. Minimum required: Git $min."
+            exit 1
+        }
     }
+    if ($current -lt $min) {
+        Write-Warn "Git $current is below minimum $min. Attempting winget upgrade..."
+        winget upgrade Git.Git --silent --accept-package-agreements --accept-source-agreements
+        $global:LASTEXITCODE = 0
+        Update-PathFromRegistry
+        $current = Get-ToolVersion 'git'
+        if (-not $current -or $current -lt $min) {
+            Write-Err "Git is $current (below minimum $min) and auto-upgrade did not bump it."
+            Write-Err "Upgrade manually from https://git-scm.com/downloads and re-run setup."
+            exit 1
+        }
+    }
+    Write-Info "Git $current OK (>= $min)."
 }
 
 function Install-ClaudeCode {
-    if (-not (Test-CommandExists "claude")) {
-        Write-Info "Claude Code not found. Installing..."
-        npm install -g @anthropic-ai/claude-code
-        if ($LASTEXITCODE -ne 0) { Write-Err "npm failed to install Claude Code (exit $LASTEXITCODE). Check your Node.js installation."; exit 1 }
-        Write-Info "Claude Code installed."
+    $min = $script:MinVersions.claude
+    $current = Get-ToolVersion 'claude'
+    if (-not $current) {
+        Write-Info "Claude Code not found. Installing latest (minimum required: $min)..."
+        npm install -g @anthropic-ai/claude-code@latest
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "npm failed to install Claude Code (exit $LASTEXITCODE)."
+            Write-Err "Minimum required: Claude Code $min. Install manually: npm install -g @anthropic-ai/claude-code@latest"
+            exit 1
+        }
     } else {
-        Write-Info "Claude Code found."
+        # Always try to bump to latest so newly-added CLI flags (e.g. `claude plugin install --scope`)
+        # are available. npm install -g is idempotent and a no-op if already at latest.
+        Write-Info "Claude Code $current found. Upgrading to latest..."
+        npm install -g @anthropic-ai/claude-code@latest
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Failed to upgrade Claude Code (exit $LASTEXITCODE). Will validate current version against minimum."
+            $global:LASTEXITCODE = 0
+        }
     }
+    $current = Get-ToolVersion 'claude'
+    if (-not $current -or $current -lt $min) {
+        Write-Err "Claude Code is $current (below minimum $min)."
+        Write-Err "Upgrade manually and re-run: npm install -g @anthropic-ai/claude-code@latest"
+        exit 1
+    }
+    Write-Info "Claude Code $current OK (>= $min)."
 }
 
 function Read-PluginConfig {
