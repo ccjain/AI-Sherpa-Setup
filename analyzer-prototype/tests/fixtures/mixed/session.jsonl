@@ -1,0 +1,4 @@
+{"type":"user","uuid":"u1","timestamp":"2026-05-28T10:00:00Z","sessionId":"s-mx-1","message":{"role":"user","content":"refactor this"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-05-28T10:00:01Z","sessionId":"s-mx-1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"/proj/app.py","old_string":"a","new_string":"b"}}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-05-28T10:00:02Z","sessionId":"s-mx-2","message":{"role":"user","content":"add a test"}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-05-28T10:00:03Z","sessionId":"s-mx-2","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/proj/test.py","old_string":"c","new_string":"d"}}]}}

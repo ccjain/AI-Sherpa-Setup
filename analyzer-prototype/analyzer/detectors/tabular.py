@@ -184,3 +184,105 @@ def detect_skill_roi(
     return findings
 
 detect_skill_roi.id = "scenario-11"
+
+
+_EXTENSION_TO_DOMAIN = {
+    ".c": "embedded", ".h": "embedded", ".cpp": "embedded",
+    ".py": "data",
+    ".ts": "web", ".tsx": "web", ".js": "web", ".jsx": "web",
+    ".go": "devops", ".tf": "devops",
+}
+
+
+def detect_domain_mismatch(
+    events: pd.DataFrame,
+    embeddings_fn=None,
+    configured_domain: str | None = None,
+) -> Iterable[Finding]:
+    if events.empty or not configured_domain:
+        return []
+    edits = events[events.event_type == "tool_call"]
+    edits = edits[edits.file_extension.notna()]
+    if edits.empty:
+        return []
+    inferred = edits.file_extension.map(_EXTENSION_TO_DOMAIN).dropna()
+    if inferred.empty:
+        return []
+    top_inferred = inferred.value_counts().idxmax()
+    if top_inferred == configured_domain:
+        return []
+    return [Finding(
+        scenario_id="scenario-3",
+        title=f"Configured domain `{configured_domain}` but file extensions suggest `{top_inferred}`",
+        bucket="setup-fix",
+        domain=None,
+        severity="normal",
+        confidence="medium",
+        evidence_md=(
+            f"The current AI Sherpa install is configured for domain "
+            f"`{configured_domain}`, but the files touched across the analyzed "
+            f"sessions match the `{top_inferred}` domain.\n\n"
+            f"**Suggested change:** re-run `setup --reconfigure` and pick "
+            f"`{top_inferred}`, or update the onboarding doc if this is "
+            f"intentional mixed work."
+        ),
+        sample_session_paths=edits.session_path.unique().tolist()[:3],
+    )]
+
+detect_domain_mismatch.id = "scenario-3"
+
+
+def detect_onboarding_velocity(events: pd.DataFrame, embeddings_fn=None) -> Iterable[Finding]:
+    if events.empty:
+        return []
+    session_lengths = (
+        events.groupby("session_id")
+        .agg(start=("timestamp", "min"), end=("timestamp", "max"))
+    )
+    session_lengths["minutes"] = (session_lengths.end - session_lengths.start).dt.total_seconds() / 60.0
+    if len(session_lengths) < 5:
+        return []
+    median_minutes = session_lengths.minutes.median()
+    return [Finding(
+        scenario_id="scenario-12",
+        title=f"Median session length: {median_minutes:.1f} min across {len(session_lengths)} sessions",
+        bucket="docs",
+        domain=None,
+        severity="low",
+        confidence="low",
+        evidence_md=(
+            f"Informational. Across the analyzed corpus, median session length "
+            f"is **{median_minutes:.1f} minutes** over {len(session_lengths)} sessions.\n\n"
+            f"Useful baseline for tracking onboarding velocity once multi-engineer "
+            f"data is available (Phase 1.5+)."
+        ),
+        sample_session_paths=[],
+    )]
+
+detect_onboarding_velocity.id = "scenario-12"
+
+
+def detect_stale_install(
+    events: pd.DataFrame,
+    embeddings_fn=None,
+    current_version: str | None = None,
+) -> Iterable[Finding]:
+    if not current_version:
+        return []
+    return [Finding(
+        scenario_id="scenario-13",
+        title=f"Current install version: {current_version}",
+        bucket="docs",
+        domain=None,
+        severity="low",
+        confidence="low",
+        evidence_md=(
+            f"Informational. The current AI Sherpa install reports version "
+            f"`{current_version}`. Once Phase 1 ships and a `VERSION` file is "
+            f"updated per release, this detector will flag installs more than N "
+            f"releases behind."
+        ),
+        sample_session_paths=[],
+    )]
+
+detect_stale_install.id = "scenario-13"

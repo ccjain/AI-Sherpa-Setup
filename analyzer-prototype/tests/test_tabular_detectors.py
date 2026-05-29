@@ -57,3 +57,21 @@ def test_detect_skill_roi_zero_fires():
     assert len(findings) >= 1
     titles = " ".join(f.title for f in findings)
     assert "board-bringup" in titles or "graphify" in titles
+
+
+def test_detect_domain_mismatch():
+    from analyzer.detectors.tabular import detect_domain_mismatch
+    findings = list(detect_domain_mismatch(_events("mixed"), embeddings_fn=None, configured_domain="embedded"))
+    assert any(f.scenario_id == "scenario-3" for f in findings)
+
+
+def test_detect_onboarding_velocity_does_not_crash_on_small_corpus():
+    from analyzer.detectors.tabular import detect_onboarding_velocity
+    findings = list(detect_onboarding_velocity(_events("mixed"), embeddings_fn=None))
+    assert isinstance(findings, list)
+
+
+def test_detect_stale_install_returns_informational():
+    from analyzer.detectors.tabular import detect_stale_install
+    findings = list(detect_stale_install(_events("mixed"), embeddings_fn=None, current_version="v2026.05.29"))
+    assert isinstance(findings, list)
