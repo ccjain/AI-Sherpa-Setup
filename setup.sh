@@ -274,16 +274,25 @@ process.stdin.on('end', () => {
 # Defensively enable a plugin after install. `claude plugin install` enables by
 # default, but a re-install of a previously-disabled plugin can stay disabled.
 # Explicit enable is idempotent and guarantees the post-setup state is [ON].
-# On enable failure, surface as ACTION REQUIRED so the user sees it in the
-# end-of-run summary.
+#
+# Three outcomes worth distinguishing:
+#  1. exit 0                                   -> freshly activated.
+#  2. exit non-0 with "already enabled" stderr -> idempotent no-op, NOT a failure.
+#  3. any other non-0 exit                     -> real failure, surface as ACTION REQUIRED.
+#
+# `|| rc=$?` captures the exit code without killing the script under `set -e`.
 _enable_plugin() {
   local spec="$1"
-  if claude plugin enable "$spec" 2>/dev/null; then
+  local stderr_capture rc=0
+  stderr_capture=$(claude plugin enable "$spec" 2>&1 1>/dev/null) || rc=$?
+  if [[ $rc -eq 0 ]]; then
     log_info "  [ENABLE] $spec activated"
+  elif [[ "$stderr_capture" == *"already enabled"* ]]; then
+    log_info "  [ENABLE] $spec already active"
   else
-    log_action "$spec installed but 'claude plugin enable' failed — the plugin may load disabled."
+    log_action "$spec installed but 'claude plugin enable' returned exit $rc - the plugin may load disabled."
     add_user_action "Activate plugin $spec" \
-      "Setup installed the plugin but the explicit 'claude plugin enable' call failed. Without enable, Claude Code may load the plugin in a disabled state and skills/commands from it won't fire." \
+      "Setup installed the plugin but the explicit 'claude plugin enable' call exited non-zero and the output didn't match the benign 'already enabled' case. stderr: $stderr_capture" \
       "claude plugin enable $spec"
   fi
 }

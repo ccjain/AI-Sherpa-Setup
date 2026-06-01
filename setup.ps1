@@ -312,20 +312,42 @@ function Read-PluginConfig {
 # Defensively enable a plugin after install / update. `claude plugin install`
 # enables by default, but a re-install of a previously-disabled plugin can stay
 # disabled. Explicit enable is idempotent and guarantees the post-setup state
-# is [ON] for every plugin the user installed. If enable itself fails, the
-# plugin will load in a disabled state — surface as ACTION REQUIRED so the
-# user sees it in the end-of-run summary.
+# is [ON] for every plugin the user installed.
+#
+# Three outcomes worth distinguishing:
+#  1. exit 0           -> freshly activated. Log [ENABLE] ... activated.
+#  2. exit non-0 with  -> already-on, idempotent no-op. Log [ENABLE] ... already active.
+#     "already enabled"   `claude plugin install` already enabled it; this is the
+#     in stderr           common case on first-run setup. NOT a failure.
+#  3. any other exit   -> real failure. Surface as ACTION REQUIRED.
+#
+# We deliberately do NOT use `2>&1` here. On PowerShell 5.1, redirecting a
+# native command's stderr inline wraps each stderr line in an ErrorRecord
+# (NativeCommandError), which leaks past `Out-Null` and prints a scary
+# pseudo-stack-trace even when the actual setup is fine. Redirecting stderr
+# to a temp file is the clean workaround that lets us still pattern-match it.
 function Enable-Plugin {
     param([string]$Spec)
-    & claude plugin enable $Spec 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Action "$Spec installed but 'claude plugin enable' returned exit $LASTEXITCODE - the plugin may load disabled."
-        Add-UserAction -Title "Activate plugin $Spec" `
-                       -Why "Setup installed the plugin but the explicit 'claude plugin enable' call exited non-zero. Without enable, Claude Code may load the plugin in a disabled state and skills/commands from it won't fire." `
-                       -Command "claude plugin enable $Spec"
-        $global:LASTEXITCODE = 0
-    } else {
+    $tmpErr = [System.IO.Path]::GetTempFileName()
+    try {
+        $null = & claude plugin enable $Spec 2>$tmpErr
+        $rc = $LASTEXITCODE
+        $stderr = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue
+    } finally {
+        Remove-Item $tmpErr -ErrorAction SilentlyContinue
+    }
+    $global:LASTEXITCODE = 0
+
+    if ($rc -eq 0) {
         Write-Info "  [ENABLE] $Spec activated"
+    } elseif ($stderr -and $stderr -match 'already enabled') {
+        Write-Info "  [ENABLE] $Spec already active"
+    } else {
+        $stderrSummary = if ($stderr) { ($stderr -replace '\s+', ' ').Trim() } else { '(no stderr)' }
+        Write-Action "$Spec installed but 'claude plugin enable' returned exit $rc - the plugin may load disabled."
+        Add-UserAction -Title "Activate plugin $Spec" `
+                       -Why "Setup installed the plugin but the explicit 'claude plugin enable' call exited non-zero and the output didn't match the benign 'already enabled' case. stderr: $stderrSummary" `
+                       -Command "claude plugin enable $Spec"
     }
 }
 
