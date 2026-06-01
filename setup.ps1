@@ -480,30 +480,22 @@ function Invoke-MarketplaceUpdate {
 }
 
 function Register-Marketplaces {
+    # As of the per-session-domain-selection design, setup registers EVERY
+    # marketplace declared in plugins.json regardless of which domain (if any)
+    # the user picked at install time. The SessionStart hook activates
+    # per-session rules and may reference plugins from any domain — so every
+    # marketplace must be available on every machine, not just the ones
+    # referenced by the currently-selected domain.
+    #
+    # The $Domain parameter is kept for source-compatibility with existing
+    # callers but is no longer consulted. Safe to drop in a future change.
     param([string]$Domain = "")
     $configFile = "$ScriptDir\plugins.json"
     if (-not (Test-Path $configFile)) { return }
     try { $config = Get-Content $configFile -Raw | ConvertFrom-Json }
     catch { return }
 
-    # Collect marketplace names actually referenced by global + selected domain plugins
-    $needed = New-Object System.Collections.Generic.HashSet[string]
-    foreach ($p in $config.global) {
-        if ($p.marketplace) { $needed.Add($p.marketplace) | Out-Null }
-    }
-    if ($Domain -and $config.domains.$Domain) {
-        foreach ($p in $config.domains.$Domain) {
-            if ($p.marketplace) { $needed.Add($p.marketplace) | Out-Null }
-        }
-    }
-
-    # Build a name -> repo map of marketplaces explicitly declared in
-    # plugins.json. Every marketplace referenced by global/domain plugins
-    # MUST be declared here; Claude CLI requires explicit `marketplace add
-    # <repo>` before any plugin from that marketplace can install. The old
-    # code assumed unmatched names were "builtin marketplaces shipped with
-    # claude" — that's wrong; Claude Code doesn't ship builtin marketplaces.
-    # An unmatched name surfaces as ACTION REQUIRED below.
+    # Build name -> repo map of marketplaces declared in plugins.json.
     $declared = @{}
     if ($config.marketplaces) {
         foreach ($entry in @($config.marketplaces)) {
@@ -513,19 +505,35 @@ function Register-Marketplaces {
         }
     }
 
-    foreach ($name in $needed) {
-        if (-not $name) { continue }
+    # Sanity check: every marketplace referenced by global OR any domain plugin
+    # must be declared. Surface undeclared references as user-action items
+    # before attempting installs, so the gap is visible at install time rather
+    # than as a confusing 'Marketplace not found' later.
+    $referenced = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($p in $config.global) {
+        if ($p.marketplace) { $referenced.Add($p.marketplace) | Out-Null }
+    }
+    if ($config.domains) {
+        foreach ($d in $config.domains.PSObject.Properties) {
+            foreach ($p in $d.Value) {
+                if ($p.marketplace) { $referenced.Add($p.marketplace) | Out-Null }
+            }
+        }
+    }
+    foreach ($name in $referenced) {
         if (-not $declared.ContainsKey($name)) {
             Write-Action "marketplace '$name' is referenced by plugins.json but not declared in marketplaces[]."
             Add-UserAction -Title "Declare marketplace '$name' in plugins.json" `
                            -Why "Plugins in plugins.json reference marketplace '$name' but the marketplaces[] array doesn't list it. Claude CLI requires every marketplace to be registered via 'claude plugin marketplace add <repo>' before any plugin from it can install. Setup can't `add` what it doesn't know the repo for, so plugins from '$name' will fail to install with 'Marketplace not found' until this is declared." `
                            -Command "Edit plugins.json and add a row like { ""repo"": ""<owner>/<repo>"", ""name"": ""$name"" } to the marketplaces[] array. Then re-run setup."
-            continue
         }
+    }
+
+    # Register every declared marketplace. Skip the redundant `marketplace add`
+    # on re-runs (it's a no-op for already-known marketplaces). Always refresh
+    # the cache via update, otherwise `claude plugin update` sees stale data.
+    foreach ($name in $declared.Keys) {
         $repo = $declared[$name]
-        # Skip the redundant `marketplace add` on re-runs (it's a no-op for
-        # already-known marketplaces). Always refresh the cache via update,
-        # otherwise `claude plugin update` later sees stale catalog data.
         if (Test-MarketplaceRegistered $name) {
             Write-Info "  [REFRESH] marketplace $name (already registered, refreshing cache)"
         } else {
@@ -1197,24 +1205,37 @@ function Invoke-Update {
     }
 
     # Refresh marketplace caches so `claude plugin update` sees latest versions.
-    Register-Marketplaces -Domain $savedDomain
+    Register-Marketplaces
 
-    # Update plugins: globals always, plus the saved domain's plugins.
+    # Update plugins: globals plus EVERY declared domain's plugins. Per the
+    # per-session-domain-selection design every domain is installed; the
+    # update path mirrors that. $savedDomain stays meaningful as the initial
+    # default state but doesn't gate which plugins get refreshed.
     $plugins = Read-PluginConfig -Section "global"
     foreach ($entry in $plugins) {
         Write-Info "Updating $($entry.name)..."
         claude plugin update $entry.name
     }
-    if ($savedDomain) {
+    $pluginsCfg = $null
+    try { $pluginsCfg = Get-Content "$ScriptDir\plugins.json" -Raw | ConvertFrom-Json } catch {}
+    if ($pluginsCfg -and $pluginsCfg.domains) {
+        foreach ($d in @($pluginsCfg.domains.PSObject.Properties.Name)) {
+            $domainPlugins = Read-PluginConfig -Section $d
+            foreach ($entry in $domainPlugins) {
+                Write-Info "Updating $($entry.name) ($d)..."
+                claude plugin update $entry.name
+            }
+            # Re-clone raw-skills repos for this domain (clone overwrites).
+            Install-Skills -Domain $d
+        }
+    } elseif ($savedDomain) {
         $domainPlugins = Read-PluginConfig -Section $savedDomain
         foreach ($entry in $domainPlugins) {
             Write-Info "Updating $($entry.name) ($savedDomain)..."
             claude plugin update $entry.name
         }
+        Install-Skills -Domain $savedDomain
     }
-
-    # Re-clone raw-skills repos for the saved domain (clone overwrites).
-    Install-Skills -Domain $savedDomain
 
     # Upgrade tools: pip --upgrade / cargo --force / git pull.
     Install-Tools -Domain $savedDomain -Upgrade
@@ -1487,11 +1508,26 @@ if ($isReinstall) {
     Write-Info "AI Sherpa not installed yet — running fresh install for domain '$domain'."
 }
 
-# Register extra marketplaces + install skills (both paths)
-Register-Marketplaces -Domain $domain
+# Register every declared marketplace + install plugins & skills for EVERY
+# declared domain. Per the per-session-domain-selection design setup is
+# domain-agnostic at install time: every marketplace and every domain's
+# plugins are made available so the SessionStart hook can activate any
+# project's chosen domain(s) without a re-install. $domain (chosen above)
+# is retained as the initial default in state.json and for embedded
+# toolchain detection below, but no longer gates what gets installed.
+Register-Marketplaces
 Install-CoreSkills
-Install-DomainSkills $domain
-Install-Skills -Domain $domain
+$pluginsCfg = $null
+try { $pluginsCfg = Get-Content "$ScriptDir\plugins.json" -Raw | ConvertFrom-Json } catch {}
+if ($pluginsCfg -and $pluginsCfg.domains) {
+    foreach ($d in @($pluginsCfg.domains.PSObject.Properties.Name)) {
+        Install-DomainSkills $d
+        Install-Skills -Domain $d
+    }
+} else {
+    Install-DomainSkills $domain
+    Install-Skills -Domain $domain
+}
 Write-GlobalSettings
 
 # Embedded-specific: probe for toolchains, flashers, debuggers and record them
