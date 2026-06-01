@@ -82,8 +82,16 @@
       },
       {
         "name": "rtk",
-        "source": "cargo",
-        "git": "https://github.com/rtk-ai/rtk"
+        "source": "github-release",
+        "repo": "rtk-ai/rtk",
+        "asset": {
+          "windows-x64": "rtk-x86_64-pc-windows-msvc.zip",
+          "linux-x64":   "rtk-x86_64-unknown-linux-musl.tar.gz",
+          "macos-x64":   "rtk-x86_64-apple-darwin.tar.gz",
+          "macos-arm64": "rtk-aarch64-apple-darwin.tar.gz"
+        },
+        "binary": "rtk",
+        "destination": "~/.local/bin"
       },
       {
         "name": "claude-usage",
