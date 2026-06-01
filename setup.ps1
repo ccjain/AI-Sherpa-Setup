@@ -413,6 +413,45 @@ function Install-Plugin {
     }
 }
 
+# Run `claude plugin marketplace update <name>` with proper stderr capture
+# (no `2>&1` NativeCommandError trap on PS 5.1) and pattern-match common
+# failure modes so the user gets a clear diagnosis instead of a generic
+# "Could not update marketplace" warning.
+#
+# Most-common cause on fresh Windows installs: Claude Code isn't logged in
+# yet, so marketplace operations that hit Anthropic's catalog endpoint fail
+# with an auth error. We catch that case and surface a precise ACTION
+# REQUIRED telling the user to run `claude` interactively to complete OAuth.
+function Invoke-MarketplaceUpdate {
+    param(
+        [string]$Name,
+        [string]$FailContext = 'plugins may fail'  # used in "$Name $FailContext" warning text
+    )
+    $tmpErr = [System.IO.Path]::GetTempFileName()
+    try {
+        $null = & claude plugin marketplace update $Name 2>$tmpErr
+        $rc = $LASTEXITCODE
+        $stderr = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue
+    } finally {
+        Remove-Item $tmpErr -ErrorAction SilentlyContinue
+    }
+    $global:LASTEXITCODE = 0
+    if ($rc -eq 0) { return $true }
+
+    $stderrSummary = if ($stderr) { ($stderr -replace '\s+', ' ').Trim() } else { '(no stderr captured)' }
+    # Match auth-failure patterns liberally — CLI versions vary the exact wording.
+    if ($stderrSummary -match '(?i)not (logged in|authenticated|authoriz)|please (login|log in|sign in)|authentication required|unauthorized|\b401\b') {
+        Write-Action "marketplace $Name update failed - Claude Code is not logged in yet."
+        Add-UserAction -Title "Log in to Claude Code, then re-run setup" `
+                       -Why "Marketplace catalog updates hit Anthropic's API and require auth. On a fresh Claude Code install the OAuth flow hasn't run yet, so the marketplace cache can't be populated - until that's done, $Name $FailContext. stderr: $stderrSummary" `
+                       -Command "claude   # press Enter, complete the browser OAuth, exit, then re-run setup.bat"
+    } else {
+        Write-Warn "  Could not update marketplace $Name - $Name $FailContext."
+        Write-Warn "  stderr: $stderrSummary"
+    }
+    return $false
+}
+
 function Register-Marketplaces {
     param([string]$Domain = "")
     $configFile = "$ScriptDir\plugins.json"
@@ -456,11 +495,7 @@ function Register-Marketplaces {
                 $global:LASTEXITCODE = 0
             }
             if ($name) {
-                try { & claude plugin marketplace update $name 2>&1 | Out-Null } catch {}
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Warn "  Could not refresh marketplace $name - plugin versions may be stale."
-                    $global:LASTEXITCODE = 0
-                }
+                [void](Invoke-MarketplaceUpdate -Name $name -FailContext 'plugin versions may be stale')
                 $handled.Add($name) | Out-Null
             }
         }
@@ -476,11 +511,7 @@ function Register-Marketplaces {
         } else {
             Write-Info "  [NEW]     builtin marketplace $name (initial cache fetch)"
         }
-        try { & claude plugin marketplace update $name 2>&1 | Out-Null } catch {}
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "  Could not update marketplace $name - $name plugins may fail to install."
-            $global:LASTEXITCODE = 0
-        }
+        [void](Invoke-MarketplaceUpdate -Name $name -FailContext 'plugins may fail to install')
     }
 }
 

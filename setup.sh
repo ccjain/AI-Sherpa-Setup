@@ -317,6 +317,37 @@ _install_plugin() {
   fi
 }
 
+# Run `claude plugin marketplace update <name>` with stderr captured (not
+# merged via 2>&1) and pattern-match common failure modes so the user gets a
+# clear diagnosis instead of a generic "Could not update marketplace" warning.
+#
+# Most-common cause on fresh installs: Claude Code is not logged in yet, so
+# marketplace operations that hit Anthropic's catalog endpoint fail with an
+# auth error. We catch that case and surface a precise ACTION REQUIRED.
+#
+# args: <name> <fail_context>   (fail_context fills "$name $fail_context" warning text)
+_marketplace_update() {
+  local name="$1" fail_context="${2:-plugins may fail}"
+  local stderr_capture rc=0
+  stderr_capture=$(claude plugin marketplace update "$name" 2>&1 1>/dev/null) || rc=$?
+  if [[ $rc -eq 0 ]]; then return 0; fi
+
+  # Collapse whitespace for readable single-line output
+  local summary="${stderr_capture//$'\n'/ }"
+  summary="${summary//$'\r'/ }"
+  summary="${summary//$'\t'/ }"
+  if echo "$summary" | grep -qiE 'not (logged in|authenticated|authoriz)|please (login|log in|sign in)|authentication required|unauthorized|\b401\b'; then
+    log_action "marketplace $name update failed - Claude Code is not logged in yet."
+    add_user_action "Log in to Claude Code, then re-run setup" \
+      "Marketplace catalog updates hit Anthropic's API and require auth. On a fresh Claude Code install the OAuth flow hasn't run yet, so the marketplace cache can't be populated - until that's done, $name $fail_context. stderr: $summary" \
+      "claude   # press Enter, complete the browser OAuth, exit, then re-run setup.sh"
+  else
+    log_warn "  Could not update marketplace $name - $name $fail_context."
+    log_warn "  stderr: $summary"
+  fi
+  return 1
+}
+
 register_marketplaces() {
   local domain="${1:-}"
   local config_file="$SCRIPT_DIR/plugins.json"
@@ -361,14 +392,16 @@ process.stdin.on('end', () => {
   if [[ -z "$entries" ]]; then return; fi
   while IFS='|' read -r repo name; do
     [[ -z "$name" ]] && continue
+    local fail_ctx
     if [[ -n "$repo" ]]; then
       log_info "Registering marketplace: $repo"
       claude plugin marketplace add "$repo" 2>/dev/null || true
+      fail_ctx='plugin versions may be stale'
     else
       log_info "Updating builtin marketplace: $name"
+      fail_ctx='plugins may fail to install'
     fi
-    claude plugin marketplace update "$name" 2>/dev/null \
-      || log_warn "Could not update marketplace $name — $name plugins may fail to install."
+    _marketplace_update "$name" "$fail_ctx" || true
   done <<< "$entries"
 }
 
