@@ -321,6 +321,7 @@ Source types and the fields each one reads:
 | `pypi` | `package` (required), `postInstall` (optional) | `pip install <package>` (or `pipx install` on PEP 668 systems), then optionally run `postInstall` |
 | `cargo` | `git` OR `package` | `cargo install --git <git>` or `cargo install <package>`. Requires Rust toolchain on PATH; skipped with a warning if not present. |
 | `git-clone` | `repo` (required), `destination`, `postInstall` | `git clone https://github.com/<repo> <destination>`. `~` in destination is expanded. Pulls latest if dest already exists. |
+| `github-release` | `repo`, `asset` (platform-arch map), `binary`, `destination` (all required) | Queries `https://api.github.com/repos/<repo>/releases/latest`, downloads the asset whose name matches `asset.<platform-arch>` (e.g. `windows-x64`), extracts it, and moves the named `binary` to `destination`. No compiler needed — uses upstream-published pre-built binaries. Skip-if-installed gate matches the other sources. Failures (rate limit, asset rename, missing binary) surface as `[ACTION REQUIRED]` with copy-pasteable remediation. |
 
 ### Current entries
 
@@ -335,8 +336,16 @@ Source types and the fields each one reads:
     },
     {
       "name": "rtk",
-      "source": "cargo",
-      "git": "https://github.com/rtk-ai/rtk"
+      "source": "github-release",
+      "repo": "rtk-ai/rtk",
+      "asset": {
+        "windows-x64": "rtk-x86_64-pc-windows-msvc.zip",
+        "linux-x64":   "rtk-x86_64-unknown-linux-musl.tar.gz",
+        "macos-x64":   "rtk-x86_64-apple-darwin.tar.gz",
+        "macos-arm64": "rtk-aarch64-apple-darwin.tar.gz"
+      },
+      "binary": "rtk",
+      "destination": "~/.local/bin"
     },
     {
       "name": "claude-usage",
@@ -362,6 +371,7 @@ specified) entries from `plugins.json` and dispatch by `source` to:
 - `Install-PyPiTool` / `install_pypi_tool`
 - `Install-CargoTool` / `install_cargo_tool`
 - `Install-GitCloneTool` / `install_git_clone_tool`
+- `Install-GitHubReleaseTool` / `install_github_release_tool`
 
 In WSL+Windows hybrid mode, PyPI tools install on the Windows side via
 `powershell.exe` interop (`install_pypi_tool_windows_side`). Cargo and
@@ -377,6 +387,7 @@ don't have to ensure Rust / Python / Node is present before running setup:
 | `pypi` | Python 3 + pip (or pipx on PEP 668 systems) | `Install-Python` (winget on Windows) / `install_python` (apt/dnf/brew on Linux/macOS, plus `ensure_pipx` for PEP 668) |
 | `cargo` | Rust toolchain (`cargo`, `rustc`) | `Install-Rust` (winget `Rustlang.Rustup` on Windows) / `install_rust` (apt/dnf/brew, or rustup-init.sh fallback) |
 | `git-clone` | `git` (already a setup prerequisite) | Setup's `Install-Git` / `install_git_via_pkg_manager` (always runs) |
+| `github-release` | None (pre-built binary download) | n/a — uses `Invoke-WebRequest`/`curl` + `Expand-Archive`/`unzip`/`tar` which are present by default on Win10+ / modern Linux / macOS |
 
 If an auto-install fails (corporate-locked machine, no network, package
 manager not available), the affected tool gets recorded in the
@@ -385,14 +396,13 @@ The rest of setup continues.
 
 **Caveat for hybrid mode (WSL with Windows-side `claude` binary):** PyPI
 tools install on the Windows side (so Windows-side Claude can see them).
-Cargo and git-clone tools install on the WSL side — they live in
-`~/.claude/tools/` in WSL's filesystem. If Windows-side Claude needs a
-cargo tool (e.g., `rtk` to compress shell output it runs through
-PowerShell), install it manually on the Windows side too:
-```powershell
-winget install Rustlang.Rustup
-cargo install --git https://github.com/rtk-ai/rtk
-```
+Git-clone tools install on the WSL side — they live in
+`~/.claude/tools/` in WSL's filesystem. `github-release` tools download
+the platform-appropriate binary for whichever side runs setup; for rtk
+specifically that's now solved by switching upstream from `cargo` to
+`github-release` (rtk's Windows binary is `rtk-x86_64-pc-windows-msvc.zip`
+and lands in `~/.local/bin` — works the same on both sides; no
+hybrid-specific manual step needed).
 
 ### Adding a new tool
 
