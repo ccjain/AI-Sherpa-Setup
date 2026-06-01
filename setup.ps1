@@ -470,48 +470,43 @@ function Register-Marketplaces {
         }
     }
 
-    # Track names we've handled via declared marketplaces. Anything left in $needed
-    # afterwards is assumed to be a builtin shipped with Claude Code itself (e.g.
-    # claude-plugins-official). On a fresh install the builtin's local cache is
-    # empty and `claude plugin install ...@<builtin>` fails with "not found in
-    # marketplace" until we run `marketplace update` to populate it.
-    $handled = New-Object System.Collections.Generic.HashSet[string]
-
-    $marketplaces = $config.marketplaces
-    if ($marketplaces -and @($marketplaces).Count -gt 0) {
-        foreach ($entry in @($marketplaces)) {
+    # Build a name -> repo map of marketplaces explicitly declared in
+    # plugins.json. Every marketplace referenced by global/domain plugins
+    # MUST be declared here; Claude CLI requires explicit `marketplace add
+    # <repo>` before any plugin from that marketplace can install. The old
+    # code assumed unmatched names were "builtin marketplaces shipped with
+    # claude" — that's wrong; Claude Code doesn't ship builtin marketplaces.
+    # An unmatched name surfaces as ACTION REQUIRED below.
+    $declared = @{}
+    if ($config.marketplaces) {
+        foreach ($entry in @($config.marketplaces)) {
             $repo = if ($entry -is [string]) { $entry } else { $entry.repo }
             $name = if ($entry -is [string]) { $null } else { $entry.name }
-            if (-not $repo) { continue }
-            if (-not $needed.Contains($name)) { continue }
-            # Skip the redundant `marketplace add` on re-runs (it's a no-op for
-            # already-known marketplaces). Always refresh the cache via update,
-            # otherwise `claude plugin update` later sees stale catalog data.
-            if (Test-MarketplaceRegistered $name) {
-                Write-Info "  [REFRESH] marketplace $name (already registered, refreshing cache)"
-            } else {
-                Write-Info "  [NEW]     marketplace $name ($repo)"
-                try { & claude plugin marketplace add $repo 2>&1 | Out-Null } catch {}
-                $global:LASTEXITCODE = 0
-            }
-            if ($name) {
-                [void](Invoke-MarketplaceUpdate -Name $name -FailContext 'plugin versions may be stale')
-                $handled.Add($name) | Out-Null
-            }
+            if ($repo -and $name) { $declared[$name] = $repo }
         }
     }
 
     foreach ($name in $needed) {
-        if (-not $name -or $handled.Contains($name)) { continue }
-        # Builtin marketplaces ship with claude but their local cache starts
-        # empty — update both populates a fresh cache and refreshes an existing
-        # one, so there's no separate `add` path here.
-        if (Test-MarketplaceRegistered $name) {
-            Write-Info "  [REFRESH] builtin marketplace $name (refreshing cache)"
-        } else {
-            Write-Info "  [NEW]     builtin marketplace $name (initial cache fetch)"
+        if (-not $name) { continue }
+        if (-not $declared.ContainsKey($name)) {
+            Write-Action "marketplace '$name' is referenced by plugins.json but not declared in marketplaces[]."
+            Add-UserAction -Title "Declare marketplace '$name' in plugins.json" `
+                           -Why "Plugins in plugins.json reference marketplace '$name' but the marketplaces[] array doesn't list it. Claude CLI requires every marketplace to be registered via 'claude plugin marketplace add <repo>' before any plugin from it can install. Setup can't `add` what it doesn't know the repo for, so plugins from '$name' will fail to install with 'Marketplace not found' until this is declared." `
+                           -Command "Edit plugins.json and add a row like { ""repo"": ""<owner>/<repo>"", ""name"": ""$name"" } to the marketplaces[] array. Then re-run setup."
+            continue
         }
-        [void](Invoke-MarketplaceUpdate -Name $name -FailContext 'plugins may fail to install')
+        $repo = $declared[$name]
+        # Skip the redundant `marketplace add` on re-runs (it's a no-op for
+        # already-known marketplaces). Always refresh the cache via update,
+        # otherwise `claude plugin update` later sees stale catalog data.
+        if (Test-MarketplaceRegistered $name) {
+            Write-Info "  [REFRESH] marketplace $name (already registered, refreshing cache)"
+        } else {
+            Write-Info "  [NEW]     marketplace $name ($repo)"
+            try { & claude plugin marketplace add $repo 2>&1 | Out-Null } catch {}
+            $global:LASTEXITCODE = 0
+        }
+        [void](Invoke-MarketplaceUpdate -Name $name -FailContext 'plugin versions may be stale')
     }
 }
 

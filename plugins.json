@@ -1,5 +1,6 @@
 {
   "marketplaces": [
+    { "repo": "anthropics/claude-plugins-official", "name": "claude-plugins-official"       },
     { "repo": "anthropics/knowledge-work-plugins",  "name": "knowledge-work-plugins"        },
     { "repo": "anthropics/financial-services",      "name": "claude-for-financial-services" },
     { "repo": "jeffallan/claude-skills",            "name": "fullstack-dev-skills"          },

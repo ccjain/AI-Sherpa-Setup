@@ -378,11 +378,11 @@ process.stdin.on('end', () => {
   });
 
   // Output one line per referenced marketplace: 'repo|name'.
-  // Declared ones include the repo so we can 'marketplace add' them.
-  // Builtins shipped with Claude Code (e.g. claude-plugins-official) have an
-  // empty repo — we only run 'marketplace update' to populate their cache,
-  // which is empty on a fresh install and causes 'plugin not found in
-  // marketplace' errors for the official plugins.
+  // Every referenced marketplace MUST be declared in marketplaces[] (the old
+  // 'builtin marketplaces ship with claude' assumption was wrong — Claude
+  // Code ships no builtin marketplaces). Names referenced but not declared
+  // get an empty repo here; the bash loop below surfaces them as
+  // ACTION REQUIRED so the user knows to declare them in plugins.json.
   needed.forEach(name => {
     const repo = declared.get(name) || '';
     process.stdout.write(repo + '|' + name + '\n');
@@ -392,16 +392,20 @@ process.stdin.on('end', () => {
   if [[ -z "$entries" ]]; then return; fi
   while IFS='|' read -r repo name; do
     [[ -z "$name" ]] && continue
-    local fail_ctx
-    if [[ -n "$repo" ]]; then
-      log_info "Registering marketplace: $repo"
-      claude plugin marketplace add "$repo" 2>/dev/null || true
-      fail_ctx='plugin versions may be stale'
-    else
-      log_info "Updating builtin marketplace: $name"
-      fail_ctx='plugins may fail to install'
+    if [[ -z "$repo" ]]; then
+      # Marketplace referenced by plugins.json but missing a declaration in
+      # marketplaces[]. The CLI can't 'marketplace add' an unknown repo, so
+      # subsequent plugin installs from this marketplace will fail. Surface
+      # as ACTION REQUIRED with the exact remediation.
+      log_action "marketplace '$name' is referenced by plugins.json but not declared in marketplaces[]."
+      add_user_action "Declare marketplace '$name' in plugins.json" \
+        "Plugins in plugins.json reference marketplace '$name' but the marketplaces[] array doesn't list it. Claude CLI requires every marketplace to be registered via 'claude plugin marketplace add <repo>' before any plugin from it can install. Setup can't add what it doesn't know the repo for, so plugins from '$name' will fail to install with 'Marketplace not found' until this is declared." \
+        "Edit plugins.json and add a row like { \"repo\": \"<owner>/<repo>\", \"name\": \"$name\" } to the marketplaces[] array. Then re-run setup.sh."
+      continue
     fi
-    _marketplace_update "$name" "$fail_ctx" || true
+    log_info "Registering marketplace: $repo"
+    claude plugin marketplace add "$repo" 2>/dev/null || true
+    _marketplace_update "$name" 'plugin versions may be stale' || true
   done <<< "$entries"
 }
 
