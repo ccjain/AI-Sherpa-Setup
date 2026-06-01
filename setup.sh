@@ -1096,8 +1096,23 @@ let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{
     return 0
   fi
 
-  # Subsequent CASE H added in the next task per the plan.
-  log_info "  [TODO]   $name - install to destination pending (Task 6) (found at $found_bin)"
+  # CASE H: success. Move binary to destination, add to PATH.
+  local dest_dir="$destination"
+  [[ "$dest_dir" == ~* ]] && dest_dir="${dest_dir/#~/$HOME}"
+  mkdir -p "$dest_dir"
+  local dest_path="$dest_dir/$bin_file_name"
+  if ! mv "$found_bin" "$dest_path" 2>/dev/null; then
+    log_action "$name install failed: couldn't move binary to $dest_path"
+    add_user_action "Manually move $name binary" \
+      "Setup extracted the binary but couldn't write to $dest_path. Check directory permissions." \
+      "Copy $found_bin to a folder on your PATH (e.g. ~/.local/bin) manually."
+    rm -rf "$tmp_dir"
+    return 0
+  fi
+  chmod +x "$dest_path" 2>/dev/null
+  export PATH="$dest_dir:$PATH"
+  rm -rf "$tmp_dir"
+  log_info "  [READY]  $name installed to $dest_path"
 }
 
 install_git_clone_tool() {

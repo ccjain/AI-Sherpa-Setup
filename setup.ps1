@@ -1257,8 +1257,26 @@ function Install-GitHubReleaseTool {
         return
     }
 
-    # Subsequent CASE H added in the next task per the plan.
-    Write-Info "  [TODO]   $($Entry.name) - install to destination pending (Task 6) (found at $($foundBin.FullName))"
+    # CASE H: success. Move binary to destination, add to PATH.
+    $destDir = $Entry.destination
+    if ($destDir.StartsWith('~')) { $destDir = $destDir -replace '^~', $env:USERPROFILE }
+    if (-not (Test-Path $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    }
+    $destPath = Join-Path $destDir $binFileName
+    try {
+        Move-Item -Path $foundBin.FullName -Destination $destPath -Force
+    } catch {
+        Write-Action "$($Entry.name) install failed: couldn't move binary to $destPath"
+        Add-UserAction -Title "Manually move $($Entry.name) binary" `
+                       -Why "Setup extracted the binary but couldn't write to $destPath. $($_.Exception.Message)" `
+                       -Command "Copy $($foundBin.FullName) to a folder on your PATH (e.g. `$env:USERPROFILE\.local\bin) manually."
+        try { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        return
+    }
+    Add-WindowsUserPath $destDir
+    try { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+    Write-Info "  [READY]  $($Entry.name) installed to $destPath"
 }
 
 function Install-GitCloneTool {

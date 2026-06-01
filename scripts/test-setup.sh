@@ -426,6 +426,82 @@ fi
 
 unset -f check_command curl log_action add_user_action log_info
 
+# --- Test: install_github_release_tool happy path (CASE H) ---
+echo "=== Test: install_github_release_tool CASE H ==="
+check_command() { return 1; }
+current_key=$(platform_arch_key)
+# Use --output flag presence to distinguish download from manifest call,
+# instead of a counter (subshell-affected and unreliable across $() boundaries).
+curl() {
+  local out_path=""
+  local prev=""
+  for a in "$@"; do
+    if [[ "$prev" == "--output" || "$prev" == "-o" ]]; then out_path="$a"; break; fi
+    prev="$a"
+  done
+  if [[ -z "$out_path" ]]; then
+    # Manifest fetch (no --output)
+    echo "{\"assets\":[{\"name\":\"rtk-test.zip\",\"browser_download_url\":\"https://example.invalid/rtk.zip\"}]}"
+    return 0
+  fi
+  # Download: create a real zip at out_path
+  local staging; staging=$(mktemp -d)
+  local bin_name="rtk"
+  [[ "$current_key" == windows-* ]] && bin_name="rtk.exe"
+  echo fake-binary-contents > "$staging/$bin_name"
+  # Use Python's zipfile (cross-platform; `zip` isn't in Git Bash on Windows).
+  # `py` is the Windows launcher; on Linux/macOS `python3` ships pre-installed.
+  local pybin=""
+  if command -v py >/dev/null 2>&1; then pybin="py"
+  elif command -v python3 >/dev/null 2>&1 && python3 -c "" 2>/dev/null; then pybin="python3"
+  elif command -v python >/dev/null 2>&1 && python -c "" 2>/dev/null; then pybin="python"
+  fi
+  if [[ -z "$pybin" ]]; then
+    echo "[CASE H TEST SKIP] no working python found to create test zip" >&2
+    rm -rf "$staging"
+    return 1
+  fi
+  $pybin -c "
+import zipfile, os, sys
+src, dest = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(dest, 'w') as z:
+    for root, _, files in os.walk(src):
+        for f in files:
+            full = os.path.join(root, f)
+            z.write(full, os.path.relpath(full, src))
+" "$staging" "$out_path" 2>/dev/null || return 1
+  rm -rf "$staging"
+  return 0
+}
+captured_info=()
+log_info() { captured_info+=("$*"); }
+log_action() { :; }
+add_user_action() { :; }
+
+dest_dir=$(mktemp -d -t ghrt-test-dest-XXXXXXXX)
+fake_entry_h="{\"name\":\"rtk\",\"repo\":\"rtk-ai/rtk\",\"asset\":{\"${current_key}\":\"rtk-test.zip\"},\"binary\":\"rtk\",\"destination\":\"$dest_dir\"}"
+set +e
+install_github_release_tool "$fake_entry_h" "false"
+set -e
+
+expected_bin="$dest_dir/rtk"
+[[ "$current_key" == windows-* ]] && expected_bin="$dest_dir/rtk.exe"
+
+if [[ -f "$expected_bin" ]]; then ok "CASE H: binary moved to destination"
+else fail "CASE H: binary moved to destination" "file at $expected_bin" "not found"
+fi
+
+got_ready=false
+for line in "${captured_info[@]}"; do
+  if [[ "$line" == *"[READY]"*"rtk"* ]]; then got_ready=true; break; fi
+done
+if $got_ready; then ok "CASE H: [READY] log line emitted"
+else fail "CASE H: [READY] log line emitted" "[READY] rtk in log" "not found"
+fi
+
+rm -rf "$dest_dir"
+unset -f check_command curl log_info log_action add_user_action
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

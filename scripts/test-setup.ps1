@@ -235,6 +235,58 @@ Install-GitHubReleaseTool -Entry $entryG
 
 Assert-True "CASE G: binary not in archive -> Write-Action emitted" ($script:CapturedAction.Count -gt 0)
 
+# ----- Test: Install-GitHubReleaseTool happy path (CASE H) -----
+Write-Host "=== Test: Install-GitHubReleaseTool happy path (CASE H) ==="
+
+function Test-CommandExists { return $false }
+
+$assetUrlH = 'https://example.invalid/rtk.zip'
+function Invoke-RestMethod {
+    return [pscustomobject]@{
+        assets = @([pscustomobject]@{ name = 'rtk-test.zip'; browser_download_url = $assetUrlH })
+    }
+}
+
+function Invoke-WebRequest {
+    param($Uri, $OutFile, $TimeoutSec)
+    $tmpDir = Split-Path -Parent $OutFile
+    if (-not (Test-Path $tmpDir)) { New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null }
+    $stagingDir = Join-Path $tmpDir 'staging'
+    if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+    $binName = if ((Get-PlatformArchKey) -like 'windows-*') { 'rtk.exe' } else { 'rtk' }
+    'fake-binary-contents' | Set-Content (Join-Path $stagingDir $binName)
+    Compress-Archive -Path "$stagingDir\*" -DestinationPath $OutFile -Force
+    Remove-Item $stagingDir -Recurse -Force
+}
+
+$script:CapturedInfo = @()
+function Write-Info { param([string]$msg) $script:CapturedInfo += $msg }
+
+$script:PathDirsAdded = @()
+function Add-WindowsUserPath { param([string]$Dir) $script:PathDirsAdded += $Dir }
+
+$destDir = Join-Path $env:TEMP "ghrt-test-dest-$([Guid]::NewGuid().ToString().Substring(0,8))"
+$entryH = [pscustomobject]@{
+    name = 'rtk'; repo = 'rtk-ai/rtk'
+    asset = @{ "$(Get-PlatformArchKey)" = 'rtk-test.zip' }
+    binary = 'rtk'; destination = $destDir
+}
+Install-GitHubReleaseTool -Entry $entryH
+
+$binNameH = if ((Get-PlatformArchKey) -like 'windows-*') { 'rtk.exe' } else { 'rtk' }
+$expectedPath = Join-Path $destDir $binNameH
+
+Assert-True "CASE H: binary moved to destination" (Test-Path $expectedPath)
+Assert-True "CASE H: destination dir added to PATH" ($script:PathDirsAdded -contains $destDir)
+$gotReadyLog = $false
+foreach ($line in $script:CapturedInfo) {
+    if ($line -match '\[READY\]\s+rtk') { $gotReadyLog = $true; break }
+}
+Assert-True "CASE H: [READY] log line emitted" $gotReadyLog
+
+try { Remove-Item $destDir -Recurse -Force } catch {}
+
 # ----- Summary -----
 Write-Host ""
 Write-Host "Total: $($script:PASS) PASS / $($script:FAIL) FAIL"
