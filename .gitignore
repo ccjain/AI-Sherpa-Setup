@@ -11,6 +11,11 @@
 .qoder/
 .gemini/
 .claude/
+# Exception: test fixtures intentionally ship `.claude/` directories as
+# inputs to the SessionStart hook test suite. They are not per-developer
+# state — they're checked-in fixture trees.
+!scripts/fixtures/**/.claude/
+!scripts/fixtures/**/.claude/**
 
 # ----------------------------------------------------------------------------
 # OS junk
