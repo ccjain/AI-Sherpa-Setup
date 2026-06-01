@@ -439,8 +439,32 @@ function Invoke-PluginCommand {
     $finalStderr = ''
     try {
         for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-            & claude plugin $Operation $Spec --scope $Scope 2>$tmpErr
-            $finalRc = $LASTEXITCODE
+            # PS 5.1 native-command call needs two safety belts to coexist with
+            # the script-level $ErrorActionPreference = "Stop":
+            #
+            # 1. Local $ErrorActionPreference = 'Continue'. When claude.exe
+            #    writes to stderr (the EBUSY message), PS 5.1's `2>file`
+            #    redirect still routes the lines through PS's error stream
+            #    and wraps them as NativeCommandError records. Under global
+            #    Stop, that becomes a TERMINATING error and aborts the
+            #    entire script — the retry loop never gets to iterate.
+            #
+            # 2. `| Out-Host` pipes stdout to the terminal but keeps it OUT
+            #    of the function's pipeline output. Without it, every line
+            #    claude.exe prints to stdout (the "Checking for updates..."
+            #    progress text) becomes part of this function's return value
+            #    alongside $finalRc, so callers do `$rc = Invoke-PluginCommand`
+            #    and get [String[], Int32] not Int32 — and `if ($rc -ne 0)`
+            #    evaluates against an array which is never -ne 0 the way
+            #    we want it.
+            $oldEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                & claude plugin $Operation $Spec --scope $Scope 2>$tmpErr | Out-Host
+                $finalRc = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $oldEAP
+            }
             $finalStderr = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue
             if ($finalRc -eq 0) { break }
             $isEbusy = $finalStderr -and $finalStderr -match 'EBUSY.*temp_git_'
