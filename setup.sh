@@ -1045,8 +1045,59 @@ let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{
     return 0
   fi
 
-  # Subsequent CASES E, F, G, H added in later tasks per the plan.
-  log_info "  [TODO]   $name - download+extract pending (Tasks 5-6) (asset: $asset_name)"
+  # Download asset to a temp file.
+  local tmp_dir; tmp_dir=$(mktemp -d -t ghrt-XXXXXXXX)
+  local tmp_file="$tmp_dir/$asset_name"
+  if ! curl --fail --silent --show-error \
+       --user-agent "ai-sherpa-setup" \
+       --connect-timeout 10 --max-time 120 \
+       --output "$tmp_file" "$asset_url" 2>/dev/null; then
+    # CASE E: download failed
+    log_action "$name download failed: could not fetch $asset_url"
+    add_user_action "Manually download $name" \
+      "Setup couldn't download the asset at $asset_url. This is usually transient (network) but may also be corporate firewall / proxy." \
+      "Download $asset_url to a folder, extract '$binary' from it, and place the binary on PATH."
+    rm -rf "$tmp_dir"
+    return 0
+  fi
+
+  # Extract archive.
+  local extract_dir="$tmp_dir/extracted"
+  mkdir -p "$extract_dir"
+  local extract_ok=true
+  if [[ "$asset_name" == *.zip ]]; then
+    unzip -q "$tmp_file" -d "$extract_dir" || extract_ok=false
+  elif [[ "$asset_name" == *.tar.gz || "$asset_name" == *.tgz ]]; then
+    tar -xzf "$tmp_file" -C "$extract_dir" || extract_ok=false
+  else
+    extract_ok=false
+  fi
+  if ! $extract_ok; then
+    # CASE F: extraction failed
+    log_action "$name extract failed for $asset_name"
+    add_user_action "Manually extract $name" \
+      "Setup downloaded $asset_name to $tmp_file but couldn't extract it." \
+      "Open $tmp_file in a file manager / extract manually, find '$binary' inside, copy to a folder on your PATH."
+    return 0
+  fi
+
+  # Locate binary in extracted tree.
+  local bin_file_name="$binary"
+  [[ "$platform_key" == windows-* ]] && bin_file_name="${binary}.exe"
+  local found_bin
+  found_bin=$(find "$extract_dir" -type f -name "$bin_file_name" 2>/dev/null | head -1)
+  if [[ -z "$found_bin" ]]; then
+    # CASE G: binary not in archive
+    local contents; contents=$(find "$extract_dir" -type f -printf "%f, " 2>/dev/null | sed 's/, $//')
+    log_action "$name: archive '$asset_name' didn't contain expected binary '$bin_file_name'."
+    add_user_action "Locate $name binary manually" \
+      "Expected to find '$bin_file_name' in the extracted archive but didn't. Files in archive: $contents. Upstream may have restructured the release." \
+      "Inspect $extract_dir, find the binary, copy it to a folder on PATH (e.g. ~/.local/bin)."
+    return 0
+  fi
+
+  # Subsequent CASE H added in the next task per the plan.
+  log_info "  [TODO]   $name - install to destination pending (Task 6) (found at $found_bin)"
 }
 
 install_git_clone_tool() {

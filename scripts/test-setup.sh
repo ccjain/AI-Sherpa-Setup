@@ -361,6 +361,71 @@ fi
 
 unset -f check_command curl log_action add_user_action log_info
 
+# --- Test: install_github_release_tool download failure (CASE E) ---
+echo "=== Test: install_github_release_tool CASE E ==="
+check_command() { return 1; }
+current_key=$(platform_arch_key)
+_curl_count=0
+curl() {
+  _curl_count=$((_curl_count + 1))
+  if [[ $_curl_count -eq 1 ]]; then
+    echo "{\"assets\":[{\"name\":\"rtk-test.zip\",\"browser_download_url\":\"https://example.invalid/rtk.zip\"}]}"
+    return 0
+  fi
+  return 22
+}
+captured_action=()
+captured_user_actions=()
+log_info() { :; }
+log_action() { captured_action+=("$*"); }
+add_user_action() { captured_user_actions+=("title=$1; why=$2; cmd=$3"); }
+
+set +e
+fake_entry_e="{\"name\":\"rtk\",\"repo\":\"rtk-ai/rtk\",\"asset\":{\"${current_key}\":\"rtk-test.zip\"},\"binary\":\"rtk\",\"destination\":\"/tmp/test-dest\"}"
+install_github_release_tool "$fake_entry_e" "false"
+set -e
+
+if [[ ${#captured_action[@]} -gt 0 ]]; then ok "CASE E emits log_action"
+else fail "CASE E emits log_action" "non-empty" "empty"
+fi
+
+# --- Test: install_github_release_tool binary missing in archive (CASE G) ---
+echo "=== Test: install_github_release_tool CASE G ==="
+captured_action=()
+captured_user_actions=()
+_curl_count=0
+curl() {
+  _curl_count=$((_curl_count + 1))
+  if [[ $_curl_count -eq 1 ]]; then
+    echo "{\"assets\":[{\"name\":\"rtk-test.zip\",\"browser_download_url\":\"https://example.invalid/rtk.zip\"}]}"
+    return 0
+  fi
+  local out_path=""
+  local prev=""
+  for a in "$@"; do
+    if [[ "$prev" == "--output" || "$prev" == "-o" ]]; then out_path="$a"; break; fi
+    prev="$a"
+  done
+  [[ -z "$out_path" ]] && return 22
+  local empty_dir
+  empty_dir=$(mktemp -d)
+  echo placeholder > "$empty_dir/something-else.txt"
+  (cd "$empty_dir" && zip -q -r "$out_path" .)
+  rm -rf "$empty_dir"
+  return 0
+}
+
+set +e
+fake_entry_g="{\"name\":\"rtk\",\"repo\":\"rtk-ai/rtk\",\"asset\":{\"${current_key}\":\"rtk-test.zip\"},\"binary\":\"rtk-not-in-archive\",\"destination\":\"/tmp/test-dest\"}"
+install_github_release_tool "$fake_entry_g" "false"
+set -e
+
+if [[ ${#captured_action[@]} -gt 0 ]]; then ok "CASE G emits log_action"
+else fail "CASE G emits log_action" "non-empty" "empty"
+fi
+
+unset -f check_command curl log_action add_user_action log_info
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

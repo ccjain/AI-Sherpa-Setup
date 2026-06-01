@@ -173,6 +173,68 @@ if ($script:CapturedUserActions.Count -gt 0) {
     Assert-Match "CASE D: UserAction Why lists actual asset names" 'something-else\.zip' $script:CapturedUserActions[0].Why
 }
 
+# ----- Test: Install-GitHubReleaseTool CASE E (HTTP download fails) -----
+Write-Host "=== Test: Install-GitHubReleaseTool download failure (CASE E) ==="
+
+function Test-CommandExists { return $false }
+
+$assetUrl = 'https://example.invalid/rtk.zip'
+function Invoke-RestMethod {
+    return [pscustomobject]@{
+        assets = @([pscustomobject]@{ name = 'rtk-test.zip'; browser_download_url = $assetUrl })
+    }
+}
+
+function Invoke-WebRequest { param($Uri, $OutFile, $TimeoutSec) throw "connection refused (test)" }
+
+$script:CapturedAction = @()
+$script:CapturedUserActions = @()
+function Write-Action { param([string]$msg) $script:CapturedAction += $msg }
+function Add-UserAction {
+    param([string]$Title, [string]$Why, [string]$Command)
+    $script:CapturedUserActions += [pscustomobject]@{ Title = $Title; Why = $Why; Command = $Command }
+}
+
+$entryE = [pscustomobject]@{
+    name = 'rtk'; repo = 'rtk-ai/rtk'
+    asset = @{ "$(Get-PlatformArchKey)" = 'rtk-test.zip' }
+    binary = 'rtk'; destination = "$env:TEMP\test-dest"
+}
+Install-GitHubReleaseTool -Entry $entryE
+
+Assert-True "CASE E: download failure -> Write-Action emitted" ($script:CapturedAction.Count -gt 0)
+if ($script:CapturedUserActions.Count -gt 0) {
+    Assert-Match "CASE E: UserAction Command contains asset URL" 'example\.invalid' $script:CapturedUserActions[0].Command
+}
+
+
+# ----- Test: Install-GitHubReleaseTool CASE G (binary missing from archive) -----
+Write-Host "=== Test: Install-GitHubReleaseTool binary missing (CASE G) ==="
+
+function Invoke-WebRequest {
+    param($Uri, $OutFile, $TimeoutSec)
+    $tmpDir = Split-Path -Parent $OutFile
+    if (-not (Test-Path $tmpDir)) { New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null }
+    $emptyContentDir = Join-Path $tmpDir 'empty-zip-content'
+    if (Test-Path $emptyContentDir) { Remove-Item $emptyContentDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $emptyContentDir -Force | Out-Null
+    'placeholder' | Set-Content (Join-Path $emptyContentDir 'something-else.txt')
+    Compress-Archive -Path "$emptyContentDir\*" -DestinationPath $OutFile -Force
+    Remove-Item $emptyContentDir -Recurse -Force
+}
+
+$script:CapturedAction = @()
+$script:CapturedUserActions = @()
+
+$entryG = [pscustomobject]@{
+    name = 'rtk'; repo = 'rtk-ai/rtk'
+    asset = @{ "$(Get-PlatformArchKey)" = 'rtk-test.zip' }
+    binary = 'rtk-not-in-archive'; destination = "$env:TEMP\test-dest"
+}
+Install-GitHubReleaseTool -Entry $entryG
+
+Assert-True "CASE G: binary not in archive -> Write-Action emitted" ($script:CapturedAction.Count -gt 0)
+
 # ----- Summary -----
 Write-Host ""
 Write-Host "Total: $($script:PASS) PASS / $($script:FAIL) FAIL"

@@ -411,6 +411,59 @@ function Enable-Plugin {
     }
 }
 
+# Run `claude plugin install <spec>` or `claude plugin update <spec>` with
+# EBUSY-aware retry. Claude CLI's plugin install/update path on Windows
+# creates a `temp_git_<ts>_<rand>` directory, git-clones the new version
+# into it, and tries to remove the temp dir after the swap. The rm
+# regularly hits EBUSY because Windows Defender / Search Indexer / git.exe
+# children still hold file handles on freshly-cloned files for ~100-500ms.
+# It's a transient lock: a 2-second wait and retry almost always succeeds.
+#
+# We retry up to $MaxAttempts times but ONLY when stderr matches the EBUSY
+# + temp_git_ pattern; any other failure mode (network, auth, real conflict)
+# fails fast on the first attempt as before. Stdout passes through so the
+# user sees claude's own "Checking for updates..." / "Already at latest"
+# messages; stderr is captured for retry detection and re-emitted only if
+# all attempts fail, so a successful retry isn't accompanied by a confusing
+# wall of "× Failed..." text.
+function Invoke-PluginCommand {
+    param(
+        [Parameter(Mandatory)][ValidateSet('install','update')][string]$Operation,
+        [Parameter(Mandatory)][string]$Spec,
+        [string]$Scope = 'user',
+        [int]$MaxAttempts = 3,
+        [int]$DelaySeconds = 2
+    )
+    $tmpErr = [System.IO.Path]::GetTempFileName()
+    $finalRc = 0
+    $finalStderr = ''
+    try {
+        for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            & claude plugin $Operation $Spec --scope $Scope 2>$tmpErr
+            $finalRc = $LASTEXITCODE
+            $finalStderr = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue
+            if ($finalRc -eq 0) { break }
+            $isEbusy = $finalStderr -and $finalStderr -match 'EBUSY.*temp_git_'
+            if (-not $isEbusy) { break }
+            if ($attempt -lt $MaxAttempts) {
+                Write-Warn "  $Spec ${Operation}: Windows EBUSY on temp_git_* (AV/indexer holds file); retry $($attempt + 1)/$MaxAttempts in ${DelaySeconds}s..."
+                Start-Sleep -Seconds $DelaySeconds
+                Clear-Content $tmpErr -ErrorAction SilentlyContinue
+            }
+        }
+    } finally {
+        Remove-Item $tmpErr -ErrorAction SilentlyContinue
+    }
+    # On final failure, re-emit the captured stderr so the user sees the real
+    # error. On retry-success the suppressed early stderr is intentionally
+    # dropped (it was the transient EBUSY).
+    if ($finalRc -ne 0 -and $finalStderr) {
+        Write-Host $finalStderr.Trim() -ForegroundColor Red
+    }
+    $global:LASTEXITCODE = $finalRc
+    return $finalRc
+}
+
 function Install-Plugin {
     param($Entry)
     if ($Entry.marketplace) {
@@ -421,16 +474,16 @@ function Install-Plugin {
             # version movement ("already at latest" vs "Updated X -> Y"),
             # instead of `claude plugin install` silently re-touching the entry.
             Write-Info "  [UPDATE] $key (currently v$existingVersion)"
-            claude plugin update $key --scope user
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warn "  $key update returned exit $LASTEXITCODE (continuing)."
+            $rc = Invoke-PluginCommand -Operation update -Spec $key
+            if ($rc -ne 0) {
+                Write-Warn "  $key update returned exit $rc (continuing)."
                 $global:LASTEXITCODE = 0
             }
             Enable-Plugin $key
         } else {
             Write-Info "  [NEW]    $key installing..."
-            claude plugin install $key --scope user
-            if ($LASTEXITCODE -ne 0) {
+            $rc = Invoke-PluginCommand -Operation install -Spec $key
+            if ($rc -ne 0) {
                 Write-Warn "  $($Entry.name) install failed - see error above."
                 Add-InstallFailure $key
             } else {
@@ -452,9 +505,9 @@ function Install-Plugin {
         }
         if ($alreadyInstalled) {
             Write-Info "  [UPDATE] $($Entry.name) (github: $($Entry.github))"
-            claude plugin update $Entry.name --scope user
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warn "  $($Entry.name) update returned exit $LASTEXITCODE (continuing)."
+            $rc = Invoke-PluginCommand -Operation update -Spec $Entry.name
+            if ($rc -ne 0) {
+                Write-Warn "  $($Entry.name) update returned exit $rc (continuing)."
                 $global:LASTEXITCODE = 0
             }
             Enable-Plugin $Entry.name
@@ -462,8 +515,8 @@ function Install-Plugin {
             Write-Info "  [NEW]    $($Entry.name) installing from github: $($Entry.github)..."
             try { & claude plugin marketplace add "https://github.com/$($Entry.github)" 2>&1 | Out-Null } catch {}
             $global:LASTEXITCODE = 0
-            claude plugin install $Entry.name --scope user
-            if ($LASTEXITCODE -ne 0) {
+            $rc = Invoke-PluginCommand -Operation install -Spec $Entry.name
+            if ($rc -ne 0) {
                 Write-Warn "  $($Entry.name) install failed - see error above."
                 Add-InstallFailure "$($Entry.name)"
             } else {
@@ -1152,8 +1205,60 @@ function Install-GitHubReleaseTool {
         return
     }
 
-    # Subsequent CASES E, F, G, H added in later tasks per the plan.
-    Write-Info "  [TODO]   $($Entry.name) - download+extract pending (Tasks 5-6)"
+    # Download asset to a temp file.
+    $tmpDir = Join-Path $env:TEMP "ghrt-$([Guid]::NewGuid().ToString().Substring(0,8))"
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+    $tmpFile = Join-Path $tmpDir $assetName
+    try {
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tmpFile -TimeoutSec 120
+    } catch {
+        # CASE E: download failed
+        Write-Action "$($Entry.name) download failed: $($_.Exception.Message)"
+        Add-UserAction -Title "Manually download $($Entry.name)" `
+                       -Why "Setup couldn't download the asset at $($asset.browser_download_url). $($_.Exception.Message)" `
+                       -Command "Download $($asset.browser_download_url) to a folder, extract '$($Entry.binary)' from it, and place the binary on PATH."
+        try { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        return
+    }
+
+    # Extract archive.
+    $extractDir = Join-Path $tmpDir 'extracted'
+    New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+    try {
+        if ($assetName -match '\.zip$') {
+            Expand-Archive -Path $tmpFile -DestinationPath $extractDir -Force
+        } elseif ($assetName -match '\.tar\.gz$|\.tgz$') {
+            & tar -xzf $tmpFile -C $extractDir
+            if ($LASTEXITCODE -ne 0) { throw "tar exited non-zero ($LASTEXITCODE)" }
+        } else {
+            throw "unsupported archive format: $assetName"
+        }
+    } catch {
+        # CASE F: extraction failed
+        Write-Action "$($Entry.name) extract failed: $($_.Exception.Message)"
+        Add-UserAction -Title "Manually extract $($Entry.name)" `
+                       -Why "Setup downloaded $assetName to $tmpFile but couldn't extract it. $($_.Exception.Message)" `
+                       -Command "Open $tmpFile in a file manager, extract '$($Entry.binary)' to a folder on your PATH."
+        return
+    }
+
+    # Locate binary in extracted tree.
+    $binFileName = if ($platformKey -like 'windows-*') { "$($Entry.binary).exe" } else { $Entry.binary }
+    $foundBin = Get-ChildItem -Path $extractDir -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -eq $binFileName } |
+                Select-Object -First 1
+    if (-not $foundBin) {
+        # CASE G: binary not in archive
+        $contents = (Get-ChildItem -Path $extractDir -Recurse -File | ForEach-Object { $_.Name }) -join ', '
+        Write-Action "$($Entry.name): archive '$assetName' didn't contain expected binary '$binFileName'."
+        Add-UserAction -Title "Locate $($Entry.name) binary manually" `
+                       -Why "Expected to find '$binFileName' in the extracted archive but didn't. Files in the archive: $contents. Upstream may have restructured the release." `
+                       -Command "Inspect $extractDir, find the binary, copy it to a folder on your PATH (e.g. `$env:USERPROFILE\.local\bin)."
+        return
+    }
+
+    # Subsequent CASE H added in the next task per the plan.
+    Write-Info "  [TODO]   $($Entry.name) - install to destination pending (Task 6) (found at $($foundBin.FullName))"
 }
 
 function Install-GitCloneTool {
