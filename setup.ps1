@@ -309,25 +309,52 @@ function Read-PluginConfig {
     return @()
 }
 
-# Defensively enable a plugin after install / update. `claude plugin install`
-# enables by default, but a re-install of a previously-disabled plugin can stay
-# disabled. Explicit enable is idempotent and guarantees the post-setup state
-# is [ON] for every plugin the user installed.
+# Check installed_plugins.json to see if a plugin is currently enabled.
+# Returns $true if an entry exists for the spec AND it is not explicitly
+# disabled. We read state instead of blindly calling `claude plugin enable`
+# because that command errors with "Plugin is already enabled" when the
+# plugin is already on — and PS 5.1's native command stderr handling
+# displays that error as a scary stack-trace even when our code handles it
+# gracefully. The pre-check eliminates the wasted call entirely.
+function Test-PluginEnabled {
+    param([string]$Spec)
+    $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
+    if (-not (Test-Path $installedFile)) { return $false }
+    try {
+        $j = Get-Content $installedFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $j.plugins) { return $false }
+        $entry = $j.plugins.$Spec
+        if (-not $entry) { return $false }
+        # Schema across CLI versions varies. Check explicit markers first;
+        # fall back to "entry exists -> enabled" since `claude plugin install`
+        # enables by default and `claude plugin disable` writes a marker.
+        if ($null -ne $entry.enabled)  { return [bool]$entry.enabled }
+        if ($null -ne $entry.disabled) { return -not [bool]$entry.disabled }
+        if ($null -ne $entry.status)   { return ($entry.status -eq 'enabled') }
+        return $true
+    } catch { return $false }
+}
+
+# Ensure a plugin is enabled after install / update. The common case is
+# that it already is (`claude plugin install` enables by default; `claude
+# plugin update` doesn't change enable state). Pre-check via
+# Test-PluginEnabled so we don't waste a CLI call that would error with
+# "already enabled" and trigger PS 5.1's NativeCommandError display.
 #
-# Three outcomes worth distinguishing:
+# When the pre-check says the plugin is NOT enabled (rare: user previously
+# ran `claude plugin disable`, or installed_plugins.json is missing/stale)
+# we still call enable, with stderr captured to a temp file and three
+# outcomes distinguished:
 #  1. exit 0           -> freshly activated. Log [ENABLE] ... activated.
-#  2. exit non-0 with  -> already-on, idempotent no-op. Log [ENABLE] ... already active.
-#     "already enabled"   `claude plugin install` already enabled it; this is the
-#     in stderr           common case on first-run setup. NOT a failure.
+#  2. exit non-0 with  -> state mismatch (we thought disabled, CLI says
+#     "already enabled"   enabled). Treat as no-op success.
 #  3. any other exit   -> real failure. Surface as ACTION REQUIRED.
-#
-# We deliberately do NOT use `2>&1` here. On PowerShell 5.1, redirecting a
-# native command's stderr inline wraps each stderr line in an ErrorRecord
-# (NativeCommandError), which leaks past `Out-Null` and prints a scary
-# pseudo-stack-trace even when the actual setup is fine. Redirecting stderr
-# to a temp file is the clean workaround that lets us still pattern-match it.
 function Enable-Plugin {
     param([string]$Spec)
+    if (Test-PluginEnabled -Spec $Spec) {
+        Write-Info "  [ENABLE] $Spec already active"
+        return
+    }
     $tmpErr = [System.IO.Path]::GetTempFileName()
     try {
         $null = & claude plugin enable $Spec 2>$tmpErr

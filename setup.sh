@@ -271,18 +271,51 @@ process.stdin.on('end', () => {
 }
 
 # Install one plugin entry (args: type name source)
-# Defensively enable a plugin after install. `claude plugin install` enables by
-# default, but a re-install of a previously-disabled plugin can stay disabled.
-# Explicit enable is idempotent and guarantees the post-setup state is [ON].
+# Check installed_plugins.json to see if a plugin is currently enabled.
+# Returns 0 (true) if an entry exists for the spec AND it is not explicitly
+# disabled. Reading state avoids the noisy `claude plugin enable` call on
+# already-enabled plugins (which errors with "already enabled" and produces
+# scary stderr that looks like a script failure).
+_plugin_is_enabled() {
+  local spec="$1"
+  local installed_file="$EFFECTIVE_HOME/.claude/plugins/installed_plugins.json"
+  [[ -f "$installed_file" ]] || return 1
+  node -e "
+try {
+  const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+  const e = (j.plugins || {})[process.argv[2]];
+  if (!e) process.exit(1);
+  // Schema varies across CLI versions: check explicit markers, then fall
+  // back to 'entry exists -> enabled' since claude plugin install enables
+  // by default and claude plugin disable writes a marker.
+  if (typeof e.enabled  === 'boolean') process.exit(e.enabled  ? 0 : 1);
+  if (typeof e.disabled === 'boolean') process.exit(e.disabled ? 1 : 0);
+  if (typeof e.status   === 'string')  process.exit(e.status === 'enabled' ? 0 : 1);
+  process.exit(0);
+} catch (err) { process.exit(1); }
+" "$installed_file" "$spec" 2>/dev/null
+}
+
+# Ensure a plugin is enabled after install / update. The common case is
+# that it already is (`claude plugin install` enables by default; `claude
+# plugin update` doesn't change enable state). Pre-check via
+# _plugin_is_enabled so we don't waste a CLI call that would error with
+# "already enabled".
 #
-# Three outcomes worth distinguishing:
+# When the pre-check says the plugin is NOT enabled (rare: user previously
+# ran `claude plugin disable`, or installed_plugins.json is missing/stale)
+# we still call enable, capture stderr, and distinguish:
 #  1. exit 0                                   -> freshly activated.
-#  2. exit non-0 with "already enabled" stderr -> idempotent no-op, NOT a failure.
+#  2. exit non-0 with "already enabled" stderr -> state mismatch, treat as no-op success.
 #  3. any other non-0 exit                     -> real failure, surface as ACTION REQUIRED.
 #
 # `|| rc=$?` captures the exit code without killing the script under `set -e`.
 _enable_plugin() {
   local spec="$1"
+  if _plugin_is_enabled "$spec"; then
+    log_info "  [ENABLE] $spec already active"
+    return
+  fi
   local stderr_capture rc=0
   stderr_capture=$(claude plugin enable "$spec" 2>&1 1>/dev/null) || rc=$?
   if [[ $rc -eq 0 ]]; then
