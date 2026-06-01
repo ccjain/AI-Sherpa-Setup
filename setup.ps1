@@ -181,6 +181,82 @@ function Test-PluginInstalled {
     return $entries[0].version
 }
 
+function Install-Winget {
+    # Bootstrap winget when it's missing. Install-NodeJS / Install-Git /
+    # Install-Python / Install-Rust all shell out to `winget install`; on older
+    # Win10 builds, debloated images, and some Server SKUs winget isn't there
+    # and those calls fail with a misleading "winget failed to install X" because
+    # cmd-not-found surfaces as a non-zero $LASTEXITCODE downstream.
+    #
+    # Cascade:
+    #   1. Microsoft.WinGet.Client PowerShell module -> Repair-WinGetPackageManager
+    #      (Microsoft's official path; pulls VCLibs + UI.Xaml deps automatically).
+    #   2. Direct App Installer msixbundle from aka.ms/getwinget -> Add-AppxPackage.
+    #   3. Surface as Add-UserAction with Microsoft Store + manual-download hints.
+    if (Test-CommandExists 'winget') {
+        $wingetVersion = ''
+        try { $wingetVersion = (winget --version 2>$null | Out-String).Trim() } catch {}
+        if ($wingetVersion) { Write-Info "winget $wingetVersion found." }
+        else                { Write-Info "winget found." }
+        return
+    }
+
+    Write-Info "winget not found. Attempting auto-install..."
+
+    # Path 1: Microsoft.WinGet.Client module + Repair-WinGetPackageManager.
+    try {
+        # PowerShell 5.1 defaults to TLS 1.0/1.1; PSGallery rejects both.
+        [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 `
+            -Force -Scope CurrentUser -ErrorAction Stop | Out-Null
+
+        $gallery = Get-PSRepository -Name 'PSGallery' -ErrorAction SilentlyContinue
+        if ($gallery -and $gallery.InstallationPolicy -ne 'Trusted') {
+            Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+        }
+
+        Write-Info "  Trying Microsoft.WinGet.Client / Repair-WinGetPackageManager..."
+        Install-Module -Name Microsoft.WinGet.Client -Force -Scope CurrentUser `
+            -AllowClobber -ErrorAction Stop | Out-Null
+        Import-Module Microsoft.WinGet.Client -ErrorAction Stop
+        Repair-WinGetPackageManager -ErrorAction Stop
+        Update-PathFromRegistry
+        if (Test-CommandExists 'winget') {
+            Write-Info "winget installed via Microsoft.WinGet.Client."
+            return
+        }
+    } catch {
+        Write-Warn "  Microsoft.WinGet.Client path failed: $($_.Exception.Message)"
+    }
+
+    # Path 2: App Installer msixbundle direct download.
+    try {
+        Write-Info "  Falling back to direct App Installer msixbundle..."
+        $bundlePath = Join-Path $env:TEMP 'Microsoft.DesktopAppInstaller.msixbundle'
+        Invoke-WebRequest -Uri 'https://aka.ms/getwinget' `
+            -OutFile $bundlePath -UseBasicParsing -ErrorAction Stop
+        Add-AppxPackage -Path $bundlePath -ErrorAction Stop
+        Remove-Item $bundlePath -ErrorAction SilentlyContinue
+        Update-PathFromRegistry
+        if (Test-CommandExists 'winget') {
+            Write-Info "winget installed via msixbundle."
+            return
+        }
+    } catch {
+        Write-Warn "  msixbundle install failed: $($_.Exception.Message)"
+    }
+
+    # Path 3: both auto-paths failed — surface as user action and exit.
+    Write-Action "winget could not be installed automatically."
+    Add-UserAction -Title "Install winget (App Installer) manually" `
+                   -Why "AI Sherpa uses winget to install Node.js, Git, Python, and Rust. Both auto-install paths failed on this machine — usually a corporate proxy blocking PSGallery / GitHub, missing Appx dependencies (VCLibs, UI.Xaml), or an unsupported Windows SKU." `
+                   -Command "Open Microsoft Store, install 'App Installer', then re-run setup.bat. Or download from https://aka.ms/getwinget and install manually."
+    Show-UserActionsReport
+    exit 1
+}
+
 function Install-NodeJS {
     $min = $script:MinVersions.node
     $current = Get-ToolVersion 'node'
@@ -1407,6 +1483,10 @@ $domainMap = @{
 
 # Prerequisites (both paths)
 Write-Info "Checking prerequisites..."
+# winget is the foundation: Install-NodeJS / Install-Git / Install-Python /
+# Install-Rust all use it. Bootstrap it if missing before anything else tries
+# to call it. Skip on uninstall — we're tearing down, not building up.
+if (-not $Uninstall) { Install-Winget }
 Install-NodeJS
 Install-Git
 Install-ClaudeCode
