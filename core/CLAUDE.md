@@ -221,3 +221,41 @@ below override any defaults from their `SKILL.md` descriptions.
 1. Run `/plugin` — does it show `[ON]`?
 2. Installed but not loaded? Run `/reload-plugins`.
 3. Absent? Re-run AI Sherpa setup; check `[ACTION REQUIRED]` at the end.
+
+---
+
+## AI Sherpa — Domain Selection Protocol
+
+AI Sherpa installs every domain's plugins at setup time, then selects which
+domain rule sets are *active* on a **per-project** basis. There is no single
+machine-wide domain — each project picks its own.
+
+A SessionStart hook handles the activation automatically:
+
+1. **If the project already has `<cwd>/.claude/ai-sherpa-domains.json`** — the
+   hook reads the listed domains and injects their rules silently as a system
+   reminder. No prompting; rules are active from turn 1.
+2. **If the file is missing** — the hook runs cheap file-fingerprint detection
+   (looking for things like `package.json` framework deps, `west.yml`,
+   `Dockerfile`, etc.). If it finds a stack signal, the hook injects the
+   detected domains' rules and instructs Claude to announce the inference to
+   the user on its first response, e.g.
+   *"I see Next.js — activating web + frontend rules. Type
+   `/ai-sherpa-domains` to change."*
+3. **If detection finds nothing** — the hook injects a reminder telling Claude
+   to ask the user which domains apply.
+
+### What you (Claude) do when the hook asks you to write the selection file
+
+When the hook's reminder includes "Then write `<path>/.claude/ai-sherpa-domains.json`",
+create the `.claude/` directory if needed and write the JSON exactly as
+specified. After detection-based runs, set `detected:true`, `user_confirmed:false`.
+After a B2 prompt where the user answered explicitly, set `detected:false`,
+`user_confirmed:true`. Use `domains:[]` with `user_confirmed:true` for opt-out.
+
+### Re-selection
+
+The `/ai-sherpa-domains` slash command (or natural-language phrases like
+"change domains", "switch to embedded + devops") re-runs the selector and
+rewrites the file. Use it whenever the project scope shifts or the
+auto-detection was wrong.
