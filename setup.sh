@@ -155,72 +155,104 @@ write_project_settings() {
   log_info "Project-level secrets protection written to $project_settings_file"
 }
 
-copy_claude_md() {
-  local domain="$1" project_type="$2"
+copy_core_only_claude_md_to_project() {
+  # Per-session domain selection moves the domain layer out of CLAUDE.md and
+  # into the SessionStart hook. The project-level CLAUDE.md now contains
+  # ONLY core rules; domain rules are injected at session start.
+  local project_type="$1"
   local core_md="$SCRIPT_DIR/core/CLAUDE.md"
-  local domain_md="$SCRIPT_DIR/domains/$domain/CLAUDE.md"
   if [[ ! -f "$core_md" ]]; then
     log_error "core/CLAUDE.md not found at: $core_md"
     exit 1
   fi
-  if [[ ! -f "$domain_md" ]]; then
-    log_error "Domain CLAUDE.md not found at: $domain_md"
-    exit 1
-  fi
   local target="$PWD/CLAUDE.md"
   if [[ "$project_type" == "existing" && -f "$target" ]]; then
-    log_warn "Appending AI Sherpa rules to existing CLAUDE.md (original preserved)"
+    log_warn "Appending AI Sherpa core rules to existing CLAUDE.md (original preserved)"
     {
       printf '\n---\n'
-      echo "<!-- AI Sherpa core + $domain rules — do not edit below this line -->"
+      echo "<!-- AI Sherpa core rules — do not edit below this line -->"
       cat "$core_md"
-      printf '\n\n---\n\n'
-      cat "$domain_md"
     } >> "$target"
   else
-    {
-      cat "$core_md"
-      printf '\n\n---\n\n'
-      cat "$domain_md"
-    } > "$target"
+    cat "$core_md" > "$target"
   fi
-  log_info "Merged core + $domain CLAUDE.md installed at $target"
+  log_info "Wrote core CLAUDE.md to $target (domain rules load per-session via SessionStart hook)."
 }
 
-write_ai_sherpa_state() {
-  local domain="$1"
-  local state_dir="$EFFECTIVE_HOME/.claude"
-  mkdir -p "$state_dir"
-  local state_file="$state_dir/.ai-sherpa-state.json"
-  local now
-  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  cat > "$state_file" <<EOF
-{
-  "domain":    "$domain",
-  "installed": "$now",
-  "version":   "1"
-}
-EOF
-  log_info "Recorded domain '$domain' in $state_file (for future --update runs)."
+# Echo the list of domain names declared under plugins.json/domains, one per
+# line. Returns nothing (and prints no error) if the file is missing/invalid.
+get_domain_names() {
+  local config_file="$SCRIPT_DIR/plugins.json"
+  [[ ! -f "$config_file" ]] && return 0
+  node -e "
+try {
+  const c = JSON.parse(require('fs').readFileSync('$config_file','utf8'));
+  for (const k of Object.keys(c.domains || {})) console.log(k);
+} catch (e) {}" 2>/dev/null
 }
 
-get_ai_sherpa_domain() {
+# Identifier for the AI Sherpa checkout — short git SHA when possible,
+# 'unknown' otherwise. Recorded in state.json's ai_sherpa_version.
+get_ai_sherpa_spec_version() {
+  if command -v git >/dev/null 2>&1; then
+    local sha
+    sha=$(cd "$SCRIPT_DIR" && git rev-parse --short HEAD 2>/dev/null)
+    if [[ -n "$sha" ]]; then echo "$sha"; return; fi
+  fi
+  echo "unknown"
+}
+
+# Read the legacy ~/.claude/.ai-sherpa-state.json's `domain` field, if any.
+# Used only by migration logic to surface a one-time advisory.
+get_legacy_domain() {
   local state_file="$EFFECTIVE_HOME/.claude/.ai-sherpa-state.json"
   [[ ! -f "$state_file" ]] && return 1
   node -e "
 try{const c=JSON.parse(require('fs').readFileSync('$state_file','utf8'));if(c.domain)process.stdout.write(c.domain)}catch(e){}" 2>/dev/null
 }
 
-write_global_claude_md() {
-  local domain="$1"
+write_ai_sherpa_state() {
+  # New schema (per spec section 2). No `domain` field — per-project
+  # selection lives in <project>/.claude/ai-sherpa-domains.json now.
+  local hook_path="$1"
+  local state_dir="$EFFECTIVE_HOME/.claude/ai-sherpa"
+  mkdir -p "$state_dir"
+  local state_file="$state_dir/state.json"
+  local now
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local version
+  version=$(get_ai_sherpa_spec_version)
+  # Use Node to build the JSON so we get correct array serialization for
+  # domains_installed + plugin_marketplaces without hand-escaping in bash.
+  AISH_HOOK_PATH="$hook_path" \
+  AISH_INSTALLED_AT="$now" \
+  AISH_VERSION="$version" \
+  AISH_SCRIPT_DIR="$SCRIPT_DIR" \
+  AISH_STATE_FILE="$state_file" \
+  node -e "
+const fs = require('fs');
+const cfg = JSON.parse(fs.readFileSync(process.env.AISH_SCRIPT_DIR + '/plugins.json','utf8'));
+const set = new Set();
+for (const p of cfg.global || []) if (p.marketplace) set.add(p.marketplace);
+for (const k of Object.keys(cfg.domains || {})) for (const p of cfg.domains[k] || []) if (p.marketplace) set.add(p.marketplace);
+const state = {
+  version: 1,
+  installed_at: process.env.AISH_INSTALLED_AT,
+  ai_sherpa_version: process.env.AISH_VERSION,
+  domains_installed: Object.keys(cfg.domains || {}),
+  plugin_marketplaces: [...set],
+  hook_path: process.env.AISH_HOOK_PATH || ''
+};
+fs.writeFileSync(process.env.AISH_STATE_FILE, JSON.stringify(state, null, 2));"
+  log_info "Wrote install manifest to $state_file"
+}
+
+write_core_only_claude_md() {
+  # User-level: write ONLY core/CLAUDE.md to ~/.claude/CLAUDE.md. Domain
+  # rules are loaded per-session by the SessionStart hook.
   local core_md="$SCRIPT_DIR/core/CLAUDE.md"
-  local domain_md="$SCRIPT_DIR/domains/$domain/CLAUDE.md"
   if [[ ! -f "$core_md" ]]; then
     log_error "core/CLAUDE.md not found at: $core_md"
-    exit 1
-  fi
-  if [[ ! -f "$domain_md" ]]; then
-    log_error "Domain CLAUDE.md not found at: $domain_md"
     exit 1
   fi
   local claude_dir="$EFFECTIVE_HOME/.claude"
@@ -230,14 +262,123 @@ write_global_claude_md() {
     cp "$target" "${target}.bak"
     log_warn "Backed up existing $target to $target.bak"
   fi
-  # Merge: core (universal) first, then the chosen domain's rules.
-  # Universal guidance reads first; domain refines on top.
-  {
-    cat "$core_md"
-    printf '\n\n---\n\n'
-    cat "$domain_md"
-  } > "$target"
-  log_info "Merged core + $domain rules written to $target ($(wc -l < "$target") lines)"
+  cat "$core_md" > "$target"
+  log_info "Wrote core CLAUDE.md to $target (domain rules load per-session via SessionStart hook)."
+}
+
+# Copy every domains/<X>/CLAUDE.md into the runtime cache the SessionStart
+# hook reads from. Overwrites unconditionally so `setup.sh --update` always
+# lands a fresh copy.
+copy_domain_rune_cache() {
+  local src_root="$SCRIPT_DIR/domains"
+  if [[ ! -d "$src_root" ]]; then
+    log_warn "domains/ not found at $src_root - skipping runtime cache copy."
+    return
+  fi
+  local dst_root="$EFFECTIVE_HOME/.claude/ai-sherpa/domains"
+  mkdir -p "$dst_root"
+  for d in "$src_root"/*/; do
+    [[ -d "$d" ]] || continue
+    local name
+    name=$(basename "$d")
+    local src_file="$d/CLAUDE.md"
+    [[ -f "$src_file" ]] || continue
+    mkdir -p "$dst_root/$name"
+    cp "$src_file" "$dst_root/$name/CLAUDE.md"
+  done
+  log_info "Copied domain rule cache to $dst_root (1 per declared domain)."
+}
+
+# Copy hooks/sessionstart.js into the user's runtime directory. Echoes the
+# absolute destination path on success (used by register_session_start_hook_settings
+# and write_ai_sherpa_state).
+write_session_start_hook() {
+  local src="$SCRIPT_DIR/hooks/sessionstart.js"
+  if [[ ! -f "$src" ]]; then
+    log_error "Hook source not found at $src - cannot install the SessionStart hook."
+    return 1
+  fi
+  local dst_dir="$EFFECTIVE_HOME/.claude/ai-sherpa/hooks"
+  mkdir -p "$dst_dir"
+  local dst="$dst_dir/sessionstart.js"
+  cp "$src" "$dst"
+  log_info "Installed SessionStart hook at $dst"
+  printf '%s' "$dst"
+}
+
+# Idempotently append our SessionStart hook entry to ~/.claude/settings.json.
+# Preserves the existing code-review-graph hook entry. Skips if our hook is
+# already registered.
+register_session_start_hook_settings() {
+  local hook_path="$1"
+  [[ -z "$hook_path" ]] && return
+  local settings_file="$EFFECTIVE_HOME/.claude/settings.json"
+  if [[ ! -f "$settings_file" ]]; then
+    log_warn "settings.json not found at $settings_file - hook entry not registered. Re-run setup."
+    return
+  fi
+  AISH_SETTINGS_FILE="$settings_file" AISH_HOOK_PATH="$hook_path" node -e "
+const fs = require('fs');
+const f = process.env.AISH_SETTINGS_FILE;
+let j;
+try { j = JSON.parse(fs.readFileSync(f, 'utf8')); }
+catch (e) { console.error('Could not parse settings.json: ' + e.message); process.exit(0); }
+if (!j.hooks) j.hooks = {};
+if (!Array.isArray(j.hooks.SessionStart)) j.hooks.SessionStart = [];
+const needle1 = 'ai-sherpa\\\\hooks\\\\sessionstart.js';
+const needle2 = 'ai-sherpa/hooks/sessionstart.js';
+const already = j.hooks.SessionStart.some(e => (e.hooks || []).some(h => {
+  const c = String(h.command || '');
+  return c.includes(needle1) || c.includes(needle2);
+}));
+if (already) { process.stdout.write('SKIP'); process.exit(0); }
+j.hooks.SessionStart.push({
+  matcher: 'startup|resume|clear|compact',
+  hooks: [{ type: 'command', command: 'node \"' + process.env.AISH_HOOK_PATH + '\"', timeout: 10000 }]
+});
+fs.writeFileSync(f, JSON.stringify(j, null, 2));
+process.stdout.write('OK');
+" | { read -r result; if [[ "$result" == "SKIP" ]]; then log_info "SessionStart hook entry already present in settings.json - skipping."; else log_info "Registered SessionStart hook in $settings_file"; fi; }
+}
+
+# Copy skills/ai-sherpa-domains/ → ~/.claude/skills/. Overwrites on every
+# install so SKILL.md stays current.
+install_ai_sherpa_skill() {
+  local src="$SCRIPT_DIR/skills/ai-sherpa-domains"
+  if [[ ! -d "$src" ]]; then
+    log_warn "Slash-command skill source not found at $src - skipping."
+    return
+  fi
+  local dst_parent="$EFFECTIVE_HOME/.claude/skills"
+  mkdir -p "$dst_parent"
+  local dst="$dst_parent/ai-sherpa-domains"
+  mkdir -p "$dst"
+  cp -R "$src"/. "$dst"/
+  log_info "Installed /ai-sherpa-domains skill at $dst"
+}
+
+# Seed the AI Sherpa repo's OWN project file so working ON AI Sherpa has
+# stable rules from day one. Does not overwrite user-edited files.
+install_ai_sherpa_project_file() {
+  local project_claude="$SCRIPT_DIR/.claude"
+  local target="$project_claude/ai-sherpa-domains.json"
+  if [[ -f "$target" ]]; then
+    log_info "$target already exists - leaving it as the user configured."
+    return
+  fi
+  mkdir -p "$project_claude"
+  local now
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  cat > "$target" <<EOF
+{
+  "version": 1,
+  "domains": ["devops"],
+  "detected": false,
+  "user_confirmed": true,
+  "updated_at": "$now"
+}
+EOF
+  log_info "Seeded $target with default domains for AI Sherpa repo work."
 }
 
 # Parse plugins.json for a given section ("global" or domain name).
@@ -382,7 +523,9 @@ _marketplace_update() {
 }
 
 register_marketplaces() {
-  local domain="${1:-}"
+  # Per-session-domain-selection: register every marketplace referenced by
+  # global + ALL domains (the old domain-parameter is gone because setup
+  # installs every domain's plugins unconditionally).
   local config_file="$SCRIPT_DIR/plugins.json"
   if [[ ! -f "$config_file" ]]; then return; fi
   local entries
@@ -393,13 +536,12 @@ process.stdin.on('data', d => { raw += d; });
 process.stdin.on('end', () => {
   let config;
   try { config = JSON.parse(raw); } catch (e) { process.exit(0); }
-  const section = '$domain';
 
-  // Collect marketplace names actually referenced by global + selected domain plugins
+  // Collect marketplace names referenced by global + every domain
   const needed = new Set();
   (config.global || []).forEach(p => { if (p.marketplace) needed.add(p.marketplace); });
-  if (section) {
-    (config.domains && config.domains[section] || []).forEach(p => { if (p.marketplace) needed.add(p.marketplace); });
+  for (const k of Object.keys(config.domains || {})) {
+    (config.domains[k] || []).forEach(p => { if (p.marketplace) needed.add(p.marketplace); });
   }
 
   // Map declared marketplaces by name -> repo
@@ -538,23 +680,29 @@ install_skills() {
 }
 
 print_summary() {
-  local domain="$1" user_level="${2:-false}"
+  local user_level="${1:-false}"
+  local domain_count
+  domain_count=$(get_domain_names | grep -c .)
   echo -e "\n${CYAN}======================================================${NC}"
   echo -e "${CYAN}  AI Sherpa Setup Complete${NC}"
   echo -e "${CYAN}======================================================${NC}"
-  echo "  Domain:   $domain"
-  echo "  Settings: $EFFECTIVE_HOME/.claude/settings.json  (secrets protection active)"
+  echo "  Domains installed: ${domain_count} (all)"
+  echo "  Settings:          $EFFECTIVE_HOME/.claude/settings.json"
+  echo "  Runtime cache:     $EFFECTIVE_HOME/.claude/ai-sherpa/"
   if [[ "$user_level" == true ]]; then
-    echo "  Rules:    $EFFECTIVE_HOME/.claude/CLAUDE.md  (active for all projects)"
+    echo "  Core rules:        $EFFECTIVE_HOME/.claude/CLAUDE.md  (all projects)"
   else
-    echo "  Settings: $PWD/.claude/settings.json   (project-level)"
-    echo "  Rules:    CLAUDE.md installed in $PWD"
+    echo "  Project settings:  $PWD/.claude/settings.json"
+    echo "  Core rules:        $PWD/CLAUDE.md"
   fi
   echo ""
-  echo "  Next steps:"
-  echo "  1. Start Claude Code:   claude"
-  echo "  2. Code-review graph runs in auto-mode via SessionStart hook (no manual step)."
-  echo "  3. Start coding — AI Sherpa rules are active automatically"
+  echo "  How domain selection works now:"
+  echo "  - Open Claude Code in any project."
+  echo "  - The SessionStart hook auto-detects domains from the project's"
+  echo "    files (package.json, west.yml, Dockerfile, ...) and activates"
+  echo "    the matching rule sets."
+  echo "  - If detection finds nothing, Claude asks you to pick."
+  echo "  - Change anytime with: /ai-sherpa-domains"
   echo ""
   echo "  Update later: bash \"$SCRIPT_DIR/setup.sh\" --update"
   echo -e "${CYAN}======================================================${NC}\n"
@@ -740,6 +888,18 @@ install_pypi_tool() {
   # args: name | package | postInstall | upgrade(true/false)
   local name="$1" package="$2" post_install="$3" upgrade="${4:-false}"
 
+  # Fast-path: skip if the tool's binary is already on PATH AND we're not in
+  # explicit update mode. Avoids the noisy install/upgrade churn (and the
+  # 'uv tool upgrade' "not installed" error when the tool was installed via
+  # a different installer originally) on every setup re-run. Use 'setup.sh
+  # --update' to force an upgrade.
+  if [[ "$upgrade" != "true" ]] && check_command "$name"; then
+    local loc
+    loc=$(command -v "$name" 2>/dev/null)
+    log_info "  [SKIP]   $name already installed${loc:+ at $loc} (run setup.sh --update to upgrade)"
+    return
+  fi
+
   if is_windows_claude_hybrid; then
     install_pypi_tool_windows_side "$name" "$package" "$post_install" "$upgrade"
     return
@@ -770,15 +930,17 @@ install_pypi_tool() {
   local last_err=""
 
   if ! $install_ok && check_command uv; then
-    local uv_action="install"
-    [[ "$upgrade" == "true" ]] && uv_action="upgrade"
-    log_info "Installing $name (uv tool $uv_action)..."
-    if uv tool "$uv_action" "$package"; then
+    # 'uv tool install' is idempotent: installs fresh, no-ops at latest,
+    # upgrades when a newer version exists. Use it unconditionally instead
+    # of 'uv tool upgrade' because the latter errors with "not installed"
+    # when the tool was previously installed via a different installer.
+    log_info "Installing $name (uv tool install)..."
+    if uv tool install "$package"; then
       export PATH="$HOME/.local/bin:$PATH"
       install_ok=true
     else
-      last_err="uv tool $uv_action failed"
-      log_warn "$name uv tool $uv_action failed - retrying with next installer..."
+      last_err="uv tool install failed"
+      log_warn "$name uv tool install failed - retrying with next installer..."
     fi
   fi
 
@@ -907,6 +1069,17 @@ install_rust() {
 install_cargo_tool() {
   # args: name | git | package | upgrade(true/false)
   local name="$1" git="$2" package="$3" upgrade="${4:-false}"
+
+  # Fast-path: skip if the tool binary is already on PATH AND we're not in
+  # explicit update mode. Avoids re-running cargo install (which pulls
+  # crates.io metadata) on every setup re-run.
+  if [[ "$upgrade" != "true" ]] && check_command "$name"; then
+    local loc
+    loc=$(command -v "$name" 2>/dev/null)
+    log_info "  [SKIP]   $name already installed${loc:+ at $loc} (run setup.sh --update to upgrade)"
+    return
+  fi
+
   if ! check_command cargo; then
     if ! install_rust; then
       add_skipped_step "$name (Rust / cargo tool)" "Rust toolchain not installed" \
@@ -959,7 +1132,10 @@ install_git_clone_tool() {
 # Read plugins.json tools.<global|domain> entries and dispatch by source.
 # upgrade=true => pip --upgrade / cargo --force / git pull (already does)
 install_tools() {
-  local domain="${1:-}" upgrade="${2:-false}"
+  # Per-session-domain-selection: install globals + every per-domain tools
+  # section in one pass. The old domain parameter is gone — setup installs
+  # everything.
+  local upgrade="${1:-false}"
   local config_file="$SCRIPT_DIR/plugins.json"
   [[ -f "$config_file" ]] || return 0
   local entries
@@ -968,8 +1144,12 @@ let raw='';process.stdin.setEncoding('utf8');
 process.stdin.on('data',d=>raw+=d);
 process.stdin.on('end',()=>{
   let c;try{c=JSON.parse(raw)}catch(e){process.exit(0)}
-  const d='$domain';const t=c.tools||{};
-  const es=[].concat(t.global||[]).concat((d&&t[d])||[]);
+  const t=c.tools||{};
+  let es=[].concat(t.global||[]);
+  for (const k of Object.keys(t)) {
+    if (k === 'global') continue;
+    es = es.concat(t[k] || []);
+  }
   es.forEach(e=>{
     const src=e.source||'';
     process.stdout.write([
@@ -998,7 +1178,8 @@ process.stdin.on('end',()=>{
 }
 
 verify_installation() {
-  local domain="$1"
+  # Per-session-domain-selection: verify globals + EVERY domain's plugins.
+  # No more domain parameter — setup installs all of them.
   # Primary signal: claude plugin install exit codes captured during install
   if [[ ${#INSTALL_FAILURES[@]} -gt 0 ]]; then
     printf '%s\n' "${INSTALL_FAILURES[@]}"
@@ -1020,17 +1201,15 @@ try { cfg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); }
 catch (e) { process.exit(0); }
 try { installed = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')); }
 catch (e) { process.exit(0); }
-const domain = process.argv[3];
-const expected = []
-  .concat(cfg.global || [])
-  .concat((cfg.domains && cfg.domains[domain]) || []);
+let expected = [].concat(cfg.global || []);
+for (const k of Object.keys(cfg.domains || {})) expected = expected.concat(cfg.domains[k] || []);
 const installedKeys = new Set(Object.keys(installed.plugins || {}));
 expected
   .filter(p => p.marketplace)
   .map(p => p.name + '@' + p.marketplace)
   .filter(k => !installedKeys.has(k))
   .forEach(k => process.stdout.write(k + '\n'));
-" "$config_file" "$installed_file" "$domain"
+" "$config_file" "$installed_file"
 }
 
 show_verification_report() {
@@ -1055,57 +1234,59 @@ show_verification_report() {
 }
 
 run_update() {
-  log_info "Updating AI Sherpa..."
+  log_info "Updating AI Sherpa (all domains)..."
 
-  # Recall which domain was picked at install time (state file written by
-  # write_ai_sherpa_state). If not present, fall back to global-only refresh.
-  local saved_domain
-  saved_domain=$(get_ai_sherpa_domain)
-  if [[ -n "$saved_domain" ]]; then
-    log_info "Recalled domain '$saved_domain' from previous install."
-  else
-    log_warn "No saved domain found. Updating global plugins/skills/tools only."
-    log_warn "Re-run bash setup.sh (not --update) once to pick a domain and record state."
-  fi
+  # No more saved-domain recall — every install covers every domain.
 
-  # Refresh marketplace caches for the marketplaces this domain actually uses
-  register_marketplaces "$saved_domain"
+  register_marketplaces
 
-  # Update global plugins always
+  # Update global plugins
   local plugin_list
   plugin_list=$(_read_plugins "global") || { log_error "Cannot read plugins.json — aborting."; exit 1; }
   if [[ -n "$plugin_list" ]]; then
     while IFS='|' read -r type name source; do
       [[ -z "$type" ]] && continue
-      log_info "Updating $name..."
+      log_info "Updating $name (global)..."
       claude plugin update "$name" \
         || log_warn "$name update may have failed — re-run --update to retry."
     done <<< "$plugin_list"
   fi
 
-  # Update plugins for the saved domain too
-  if [[ -n "$saved_domain" ]]; then
+  # Update every domain's plugins
+  while IFS= read -r dom; do
+    [[ -z "$dom" ]] && continue
     local domain_plugins
-    domain_plugins=$(_read_plugins "$saved_domain") || true
-    if [[ -n "$domain_plugins" ]]; then
-      while IFS='|' read -r type name source; do
-        [[ -z "$type" ]] && continue
-        log_info "Updating $name ($saved_domain)..."
-        claude plugin update "$name" \
-          || log_warn "$name update may have failed — re-run --update to retry."
-      done <<< "$domain_plugins"
-    fi
-  fi
+    domain_plugins=$(_read_plugins "$dom") || true
+    [[ -z "$domain_plugins" ]] && continue
+    while IFS='|' read -r type name source; do
+      [[ -z "$type" ]] && continue
+      log_info "Updating $name ($dom)..."
+      claude plugin update "$name" \
+        || log_warn "$name update may have failed — re-run --update to retry."
+    done <<< "$domain_plugins"
+  done <<< "$(get_domain_names)"
 
-  # Re-clone raw skills (clone overwrites)
-  install_skills "$saved_domain"
+  # Re-clone raw skills for every domain (clone overwrites)
+  while IFS= read -r dom; do
+    [[ -z "$dom" ]] && continue
+    install_skills "$dom"
+  done <<< "$(get_domain_names)"
 
-  # Upgrade tools: pip --upgrade / cargo --force / git pull
-  install_tools "$saved_domain" "true"
+  # Upgrade tools: pip --upgrade / cargo --force / git pull (one pass — install_tools
+  # now installs globals + every per-domain tools section)
+  install_tools "true"
+
+  # Refresh AI Sherpa runtime artifacts.
+  copy_domain_rune_cache
+  local hook_path
+  hook_path=$(write_session_start_hook)
+  register_session_start_hook_settings "$hook_path"
+  install_ai_sherpa_skill
 
   write_settings
-  log_info "Update complete. Plugins, skills, and tools refreshed to latest${saved_domain:+ for domain '$saved_domain'}."
-  log_info "Project CLAUDE.md was NOT modified."
+  write_ai_sherpa_state "$hook_path"
+  log_info "Update complete. Plugins, skills, tools, and AI Sherpa runtime refreshed."
+  log_info "CLAUDE.md was NOT modified."
 }
 
 run_uninstall() {
@@ -1215,11 +1396,25 @@ try{
     rm -rf "$tmp"
   done
 
-  # 4. Remove AI Sherpa state file (the saved-domain marker)
-  local state_file="$EFFECTIVE_HOME/.claude/.ai-sherpa-state.json"
-  if [[ -f "$state_file" ]]; then
-    log_info "Removing AI Sherpa state file..."
-    rm -f "$state_file"
+  # 4. Remove AI Sherpa runtime directory (state.json, hook, runtime cache),
+  # the legacy state file from the old design, AND the /ai-sherpa-domains
+  # slash-command skill. Per-project ai-sherpa-domains.json files in user
+  # projects are NOT touched — those are user artifacts.
+  local aish_runtime="$EFFECTIVE_HOME/.claude/ai-sherpa"
+  if [[ -d "$aish_runtime" ]]; then
+    log_info "Removing AI Sherpa runtime directory ($aish_runtime)..."
+    rm -rf "$aish_runtime"
+  fi
+  for f in "$EFFECTIVE_HOME/.claude/.ai-sherpa-state.json" "$EFFECTIVE_HOME/.claude/.ai-sherpa-state.json.legacy"; do
+    if [[ -f "$f" ]]; then
+      log_info "Removing legacy state file ($f)..."
+      rm -f "$f"
+    fi
+  done
+  local aish_skill="$EFFECTIVE_HOME/.claude/skills/ai-sherpa-domains"
+  if [[ -d "$aish_skill" ]]; then
+    log_info "Removing /ai-sherpa-domains slash-command skill..."
+    rm -rf "$aish_skill"
   fi
 
   # 5. Restore settings.json + CLAUDE.md from .bak (or delete)
@@ -1355,41 +1550,22 @@ main() {
     log_info "Claude Code found."
   fi
 
-  # --- Domain selection ---
-  echo ""
-  echo "Which domain are you working in?"
-  echo "  --- Engineering ---"
-  echo "  [1] Embedded Software (C/C++, firmware, RTOS)"
-  echo "  [2] Web (full-stack: frontend + backend + UI/UX)"
-  echo "  [3] Data Science / ML"
-  echo "  [4] DevOps / Platform"
-  echo "  --- Business ---"
-  echo "  [5] Marketing"
-  echo "  [6] Sales"
-  echo "  [7] Finance / Accounting"
-  echo "  [8] Customer Service / Support"
-  echo "  [9] Procurement / Operations"
-  echo "  --- AI & UI/UX ---"
-  echo "  [10] AI / ML Agents (RAG, evals, prompt engineering)"
-  echo "  [11] Frontend + UI/UX"
-  echo ""
-  read -rp "Enter number [1-11]: " domain_choice
+  # --- Per-session domain selection: NO install-time prompt anymore. ---
+  # Setup installs every domain's plugins and the SessionStart hook activates
+  # the right set per-project at conversation start. See
+  # docs/superpowers/specs/2026-06-01-per-session-domain-selection-design.md.
 
-  local domain
-  case "$domain_choice" in
-    1)  domain="embedded" ;;
-    2)  domain="web" ;;
-    3)  domain="data" ;;
-    4)  domain="devops" ;;
-    5)  domain="marketing" ;;
-    6)  domain="sales" ;;
-    7)  domain="finance" ;;
-    8)  domain="service" ;;
-    9)  domain="procurement" ;;
-    10) domain="ai" ;;
-    11) domain="frontend" ;;
-    *)  log_error "Invalid choice: $domain_choice. Run the script again."; exit 1 ;;
-  esac
+  # Migration: detect legacy state file and surface a one-time advisory.
+  local legacy_domain=""
+  legacy_domain=$(get_legacy_domain || true)
+  local legacy_state_file="$EFFECTIVE_HOME/.claude/.ai-sherpa-state.json"
+  if [[ -n "$legacy_domain" ]]; then
+    log_info "Detected legacy install with domain='$legacy_domain'."
+    log_info "Migrating to per-conversation domain selection..."
+    add_user_action "Heads up: domain selection moved to per-project" \
+      "Your previous AI Sherpa install used domain='$legacy_domain' system-wide. Going forward, each project picks its own domain(s). The first conversation you open in any project will auto-detect (or ask if detection finds nothing). Use /ai-sherpa-domains inside Claude Code to override." \
+      "(no immediate action required — heads-up only)"
+  fi
 
   # --- New or existing project (project-level only) ---
   local project_type=""
@@ -1407,48 +1583,78 @@ main() {
     esac
   fi
 
-  # --- Install ---
-  register_marketplaces "$domain"
+  # --- Install: plugins + skills + tools for ALL domains ---
+  register_marketplaces
   install_core_skills
-  install_domain_skills "$domain"
-  install_skills "$domain"
+  while IFS= read -r dom; do
+    [[ -z "$dom" ]] && continue
+    install_domain_skills "$dom"
+  done <<< "$(get_domain_names)"
+  while IFS= read -r dom; do
+    [[ -z "$dom" ]] && continue
+    install_skills "$dom"
+  done <<< "$(get_domain_names)"
   write_settings
+
+  # --- CLAUDE.md (core-only) ---
   if [[ "$is_user_level" == true ]]; then
-    write_global_claude_md "$domain"
+    write_core_only_claude_md
   else
     write_project_settings
-    copy_claude_md "$domain" "$project_type"
+    copy_core_only_claude_md_to_project "$project_type"
   fi
-  install_tools "$domain"
-  write_ai_sherpa_state "$domain"
 
-  # --- Embedded-specific: detect Windows toolchains/flashers via powershell.exe ---
+  # --- AI Sherpa runtime artifacts ---
+  copy_domain_rune_cache
+  local hook_path
+  hook_path=$(write_session_start_hook)
+  register_session_start_hook_settings "$hook_path"
+  install_ai_sherpa_skill
+
+  # --- Tools (globals + every per-domain tools section in one pass) ---
+  local upgrade_flag="false"
+  # No auto-upgrade on plain re-runs. install_pypi_tool / install_cargo_tool
+  # skip tools already on PATH; explicit upgrades go through `setup.sh --update`.
+  install_tools "$upgrade_flag"
+
+  write_ai_sherpa_state "$hook_path"
+
+  if [[ "$is_user_level" == true ]]; then
+    install_ai_sherpa_project_file
+  fi
+
+  # Migration paper-trail: rename legacy state file after the new one is in
+  # place so a failed install doesn't lose the user's old marker.
+  if [[ -n "$legacy_domain" && -f "$legacy_state_file" ]]; then
+    mv "$legacy_state_file" "${legacy_state_file}.legacy" 2>/dev/null || true
+    log_info "Renamed legacy state file to ${legacy_state_file}.legacy"
+  fi
+
+  # --- Embedded toolchain detection: now UNCONDITIONAL ---
   # Even in hybrid mode the user's toolchains live on Windows; calling powershell.exe
   # gives the detection script native registry + Program Files access.
-  if [[ "$domain" == "embedded" ]]; then
-    local detect_script_unix="$SCRIPT_DIR/scripts/detect-embedded-toolchain.ps1"
-    if [[ -f "$detect_script_unix" ]]; then
-      if is_windows_claude_hybrid && has_windows_interop; then
-        local detect_script_win target_home_win
-        detect_script_win=$(wslpath -w "$detect_script_unix")
-        target_home_win=$(wslpath -w "$EFFECTIVE_HOME")
-        log_info "Detecting embedded toolchain and flashing tools (via powershell.exe)..."
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$detect_script_win" -TargetHome "$target_home_win" \
-          || log_warn "Toolchain detection exited non-zero — embedded-toolchain.json may be incomplete."
-      else
-        log_warn "Skipping toolchain detection: pure-Linux embedded detection not yet implemented."
-        add_skipped_step \
-          "Embedded toolchain detection (~/.claude/embedded-toolchain.json)" \
-          "Only Windows-side detection is implemented; pure-Linux embedded host detected" \
-          "Run manually: pwsh -File '$detect_script_unix' -TargetHome '$EFFECTIVE_HOME'   (requires PowerShell + Windows toolchains)"
-      fi
+  local detect_script_unix="$SCRIPT_DIR/scripts/detect-embedded-toolchain.ps1"
+  if [[ -f "$detect_script_unix" ]]; then
+    if is_windows_claude_hybrid && has_windows_interop; then
+      local detect_script_win target_home_win
+      detect_script_win=$(wslpath -w "$detect_script_unix")
+      target_home_win=$(wslpath -w "$EFFECTIVE_HOME")
+      log_info "Detecting embedded toolchain and flashing tools (via powershell.exe)..."
+      powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$detect_script_win" -TargetHome "$target_home_win" \
+        || log_warn "Toolchain detection exited non-zero — embedded-toolchain.json may be incomplete."
     else
-      log_warn "Toolchain detection script not found at $detect_script_unix"
+      log_warn "Skipping toolchain detection: pure-Linux embedded detection not yet implemented."
+      add_skipped_step \
+        "Embedded toolchain detection (~/.claude/embedded-toolchain.json)" \
+        "Only Windows-side detection is implemented; pure-Linux embedded host detected" \
+        "Run manually: pwsh -File '$detect_script_unix' -TargetHome '$EFFECTIVE_HOME'   (requires PowerShell + Windows toolchains)"
     fi
+  else
+    log_warn "Toolchain detection script not found at $detect_script_unix"
   fi
 
-  # --- WSL-specific caveats ---
-  if is_wsl && [[ "$domain" == "web" ]]; then
+  # --- WSL-specific caveats (web Chrome integration) ---
+  if is_wsl; then
     add_skipped_step \
       "Claude Code Chrome integration (--chrome / /chrome)" \
       "Not supported on WSL by upstream Claude Code (requires native Chrome/Edge)" \
@@ -1457,18 +1663,18 @@ main() {
 
   # --- Verify ---
   local missing
-  missing=$(verify_installation "$domain")
+  missing=$(verify_installation)
   if [[ -n "$missing" ]]; then
     show_verification_report "$missing"
     show_skipped_steps_report
     show_user_actions_report
-    print_summary "$domain" "$is_user_level"
+    print_summary "$is_user_level"
     exit 1
   fi
   log_info "All expected plugins verified in installed_plugins.json."
   show_skipped_steps_report
   show_user_actions_report
-  print_summary "$domain" "$is_user_level"
+  print_summary "$is_user_level"
 }
 
 # Source guard — prevents main() running when sourced by tests

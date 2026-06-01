@@ -161,9 +161,9 @@ function Test-MarketplaceRegistered {
 }
 
 # Returns the installed version string for a "<name>@<marketplace>" plugin key,
-# or $null if not installed. Used by Install-Plugin to decide install-vs-update
-# and by Invoke-DomainSwitch to decide what to uninstall. Reads claude's own
-# installed_plugins.json — same source of truth that Test-Installation uses.
+# or $null if not installed. Used by Install-Plugin to decide install-vs-update.
+# Reads claude's own installed_plugins.json — same source of truth that
+# Test-Installation uses.
 function Test-PluginInstalled {
     param([string]$Key)
     $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
@@ -556,20 +556,25 @@ function Invoke-MarketplaceUpdate {
 }
 
 function Register-Marketplaces {
-    param([string]$Domain = "")
+    # Register every marketplace referenced by global + ALL domains. The old
+    # signature took a single $Domain because setup picked one at install
+    # time; per-session-domain-selection moved that choice out of install
+    # and into the conversation, so install-time must cover every domain.
     $configFile = "$ScriptDir\plugins.json"
     if (-not (Test-Path $configFile)) { return }
     try { $config = Get-Content $configFile -Raw | ConvertFrom-Json }
     catch { return }
 
-    # Collect marketplace names actually referenced by global + selected domain plugins
+    # Collect marketplace names referenced by global + every domain.
     $needed = New-Object System.Collections.Generic.HashSet[string]
     foreach ($p in $config.global) {
         if ($p.marketplace) { $needed.Add($p.marketplace) | Out-Null }
     }
-    if ($Domain -and $config.domains.$Domain) {
-        foreach ($p in $config.domains.$Domain) {
-            if ($p.marketplace) { $needed.Add($p.marketplace) | Out-Null }
+    if ($config.domains) {
+        foreach ($domName in $config.domains.PSObject.Properties.Name) {
+            foreach ($p in $config.domains.$domName) {
+                if ($p.marketplace) { $needed.Add($p.marketplace) | Out-Null }
+            }
         }
     }
 
@@ -636,15 +641,21 @@ function Install-DomainSkills {
 }
 
 function Install-Skills {
-    param([string]$Domain)
+    # Per-session-domain-selection: install globals + every per-domain skills
+    # section in one pass. The old $Domain parameter is gone — setup installs
+    # all of them. (Skill repos can be large to clone; doing this once avoids
+    # the N-times-redundant clone the per-domain loop would otherwise cause.)
     $configFile = "$ScriptDir\plugins.json"
     if (-not (Test-Path $configFile)) { return }
     try { $config = Get-Content $configFile -Raw | ConvertFrom-Json } catch { return }
     if (-not $config.skills) { return }
 
     $entries = @()
-    if ($config.skills.global)            { $entries += @($config.skills.global) }
-    if ($Domain -and $config.skills.$Domain) { $entries += @($config.skills.$Domain) }
+    if ($config.skills.global) { $entries += @($config.skills.global) }
+    foreach ($k in $config.skills.PSObject.Properties.Name) {
+        if ($k -eq 'global') { continue }
+        if ($config.skills.$k) { $entries += @($config.skills.$k) }
+    }
     if ($entries.Count -eq 0) { return }
 
     if (-not (Test-CommandExists "git")) {
@@ -707,69 +718,77 @@ function Write-ProjectSettings {
     Write-Info "Project-level secrets protection written to $projectSettingsFile"
 }
 
-function Copy-ClaudeMd {
-    param([string]$Domain, [string]$ProjectType)
-    $core   = "$ScriptDir\core\CLAUDE.md"
-    $domain = "$ScriptDir\domains\$Domain\CLAUDE.md"
+function Copy-CoreOnlyClaudeMd-ToProject {
+    param([string]$ProjectType)
+    # Per-session domain selection moves the domain layer out of CLAUDE.md and
+    # into the SessionStart hook (which loads rules from the per-project
+    # selection file). The project-level CLAUDE.md now contains ONLY core
+    # rules; domain rules are injected at session start.
+    $core = "$ScriptDir\core\CLAUDE.md"
     if (-not (Test-Path $core)) {
         Write-Err "core/CLAUDE.md not found at: $core"
-        exit 1
-    }
-    if (-not (Test-Path $domain)) {
-        Write-Err "Domain CLAUDE.md not found at: $domain"
-        Write-Err "Is '$Domain' a valid domain? Valid: embedded, web, data, devops, marketing, sales, finance, service, procurement"
         exit 1
     }
     $target = "$(Get-Location)\CLAUDE.md"
-    # -Encoding UTF8 on Get-Content is REQUIRED on PowerShell 5.1 (see comment
-    # in Write-GlobalClaudeMd above).
-    $coreContent   = (Get-Content $core -Raw -Encoding UTF8).TrimEnd()
-    $domainContent = (Get-Content $domain -Raw -Encoding UTF8)
-    $merged = $coreContent + "`r`n`r`n---`r`n`r`n" + $domainContent
+    $coreContent = (Get-Content $core -Raw -Encoding UTF8)
     if ($ProjectType -eq "existing" -and (Test-Path $target)) {
-        Write-Warn "Appending AI Sherpa rules to existing CLAUDE.md (original preserved)"
+        Write-Warn "Appending AI Sherpa core rules to existing CLAUDE.md (original preserved)"
         Add-Content $target "`n---" -Encoding UTF8
-        Add-Content $target "<!-- AI Sherpa core + $Domain rules - do not edit below this line -->" -Encoding UTF8
-        Add-Content $target $merged -Encoding UTF8
+        Add-Content $target "<!-- AI Sherpa core rules - do not edit below this line -->" -Encoding UTF8
+        Add-Content $target $coreContent -Encoding UTF8
     } else {
-        Set-Content -Path $target -Value $merged -Encoding UTF8
+        Set-Content -Path $target -Value $coreContent -Encoding UTF8
     }
-    Write-Info "Merged core + $Domain CLAUDE.md installed at $target"
+    Write-Info "Wrote core CLAUDE.md to $target (domain rules load per-session via SessionStart hook)."
 }
 
 function Write-AiSherpaState {
-    param([string]$Domain)
-    $stateDir  = "$env:USERPROFILE\.claude"
+    # New schema (per docs/superpowers/specs/2026-06-01-per-session-domain-selection-design.md
+    # Section 2). The legacy top-level `domain` field is gone; per-project
+    # selection lives in <project>/.claude/ai-sherpa-domains.json instead.
+    param([string]$HookPath = "")
+    $stateDir  = "$env:USERPROFILE\.claude\ai-sherpa"
     if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
-    $stateFile = "$stateDir\.ai-sherpa-state.json"
-    $state = @{
-        domain    = $Domain
-        installed = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-        version   = "1"
+    $stateFile = "$stateDir\state.json"
+
+    # Collect marketplaces actually referenced by global + every domain.
+    $configFile = "$ScriptDir\plugins.json"
+    $marketplaces = @()
+    if (Test-Path $configFile) {
+        try {
+            $cfg = Get-Content $configFile -Raw | ConvertFrom-Json
+            $set = New-Object System.Collections.Generic.HashSet[string]
+            foreach ($p in $cfg.global) { if ($p.marketplace) { $set.Add($p.marketplace) | Out-Null } }
+            if ($cfg.domains) {
+                foreach ($d in $cfg.domains.PSObject.Properties.Name) {
+                    foreach ($p in $cfg.domains.$d) {
+                        if ($p.marketplace) { $set.Add($p.marketplace) | Out-Null }
+                    }
+                }
+            }
+            $marketplaces = @($set)
+        } catch {}
     }
-    $state | ConvertTo-Json | Set-Content -Path $stateFile -Encoding UTF8
-    Write-Info "Recorded domain '$Domain' in $stateFile (for future --update runs)."
+
+    $state = [ordered]@{
+        version            = 1
+        installed_at       = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        ai_sherpa_version  = (Get-AiSherpaSpecVersion)
+        domains_installed  = @(Get-DomainNames)
+        plugin_marketplaces = $marketplaces
+        hook_path          = $HookPath
+    }
+    ($state | ConvertTo-Json -Depth 5) | Set-Content -Path $stateFile -Encoding UTF8
+    Write-Info "Wrote install manifest to $stateFile"
 }
 
-function Get-AiSherpaDomain {
-    $stateFile = "$env:USERPROFILE\.claude\.ai-sherpa-state.json"
-    if (-not (Test-Path $stateFile)) { return $null }
-    try {
-        $state = Get-Content $stateFile -Raw | ConvertFrom-Json
-        return $state.domain
-    } catch { return $null }
-}
-
-function Write-GlobalClaudeMd {
-    param([string]$Domain)
-    $core   = "$ScriptDir\core\CLAUDE.md"
-    $domain = "$ScriptDir\domains\$Domain\CLAUDE.md"
+function Write-CoreOnlyClaudeMd {
+    # User-level: write ONLY core/CLAUDE.md to ~/.claude/CLAUDE.md. Domain
+    # rules are loaded per-session by the SessionStart hook; no domain merge
+    # at install time.
+    $core = "$ScriptDir\core\CLAUDE.md"
     if (-not (Test-Path $core)) {
         Write-Err "core/CLAUDE.md not found at: $core"
-        exit 1
-    }
-    if (-not (Test-Path $domain)) {
-        Write-Err "Domain CLAUDE.md not found at: $domain"
         exit 1
     }
     $claudeDir = "$env:USERPROFILE\.claude"
@@ -779,17 +798,13 @@ function Write-GlobalClaudeMd {
         Copy-Item $target "$target.bak" -Force
         Write-Warn "Backed up existing ~/.claude/CLAUDE.md to CLAUDE.md.bak"
     }
-    # Merge: core rules first, then the chosen domain's rules. Universal guidance
-    # reads first, domain refines on top. Separator makes the boundary obvious.
     # -Encoding UTF8 on Get-Content is REQUIRED on PowerShell 5.1: the default
     # codepage is system ANSI (Windows-1252 in en-US), which mangles UTF-8 chars
     # like em-dashes (— -> â€") at read time. Write-side -Encoding UTF8 alone
     # is not enough because the corruption happens before the write.
-    $coreContent   = (Get-Content $core -Raw -Encoding UTF8).TrimEnd()
-    $domainContent = (Get-Content $domain -Raw -Encoding UTF8)
-    $merged = $coreContent + "`r`n`r`n---`r`n`r`n" + $domainContent
-    Set-Content -Path $target -Value $merged -Encoding UTF8
-    Write-Info "Merged core + $Domain rules written to $target (active for all projects)"
+    $coreContent = (Get-Content $core -Raw -Encoding UTF8)
+    Set-Content -Path $target -Value $coreContent -Encoding UTF8
+    Write-Info "Wrote core CLAUDE.md to $target (domain rules load per-session via SessionStart hook)."
 }
 
 function Resolve-PipCommand {
@@ -918,6 +933,18 @@ function Install-Python {
 function Install-PyPiTool {
     param([string]$Name, [string]$Package, [string]$PostInstall, [switch]$Upgrade)
 
+    # Fast-path: skip if the tool's binary is already on PATH AND we're not in
+    # explicit update mode. Avoids the noisy install/upgrade churn (and the
+    # `uv tool upgrade` "not installed" error when the tool came from a
+    # different installer originally) on every setup re-run. `setup.bat
+    # --update` flips $Upgrade and bypasses this skip.
+    if (-not $Upgrade -and (Test-CommandExists $Name)) {
+        $loc = try { (Get-Command $Name -ErrorAction SilentlyContinue).Source } catch { $null }
+        $locSuffix = if ($loc) { " at $loc" } else { '' }
+        Write-Info "  [SKIP]   $Name already installed$locSuffix (run setup.bat --update to upgrade)"
+        return
+    }
+
     # Build the ordered list of installers to attempt. uv tool first (isolated,
     # fast), pipx second (isolated, mature), pip --user last (shares the user's
     # global Python env so dep conflicts are possible — warned about below).
@@ -954,8 +981,15 @@ function Install-PyPiTool {
         $ok = $false
         switch ($installer) {
             'uv' {
-                Write-Info "Installing $Name (uv tool$(if ($Upgrade) { ' upgrade' } else { ' install' }))..."
-                if ($Upgrade) { & uv tool upgrade $Package } else { & uv tool install $Package }
+                # `uv tool install` is idempotent: installs fresh, no-ops if
+                # already at latest, upgrades when a newer version exists. We
+                # use it unconditionally instead of `uv tool upgrade` because
+                # the latter errors with "not installed" when the tool was
+                # previously installed via a different installer (pip-user,
+                # pipx) and only the binary — not uv's tool registry — knows
+                # about it.
+                Write-Info "Installing $Name (uv tool install)..."
+                & uv tool install $Package
                 $ok = ($LASTEXITCODE -eq 0)
                 if ($ok) { Add-WindowsUserPath "$env:USERPROFILE\.local\bin" }
             }
@@ -1074,6 +1108,18 @@ function Install-Rust {
 
 function Install-CargoTool {
     param([string]$Name, [string]$Git, [string]$Package, [switch]$Upgrade)
+
+    # Fast-path: skip if already on PATH and not explicitly updating.
+    # `cargo install` without --force is itself a no-op when the tool is at
+    # the latest version, but it still pulls metadata from crates.io — the
+    # skip avoids even that.
+    if (-not $Upgrade -and (Test-CommandExists $Name)) {
+        $loc = try { (Get-Command $Name -ErrorAction SilentlyContinue).Source } catch { $null }
+        $locSuffix = if ($loc) { " at $loc" } else { '' }
+        Write-Info "  [SKIP]   $Name already installed$locSuffix (run setup.bat --update to upgrade)"
+        return
+    }
+
     if (-not (Test-CommandExists "cargo")) {
         if (-not (Install-Rust)) {
             Add-SkippedStep -Name "$Name (Rust / cargo tool)" `
@@ -1132,15 +1178,22 @@ function Install-GitCloneTool {
 }
 
 function Install-Tools {
-    param([string]$Domain, [switch]$Upgrade)
+    # Per-session domain selection installs every domain, so this function
+    # installs globals + every per-domain tools section in one pass. (Today
+    # only `tools.global` exists in plugins.json; the per-domain loop is
+    # future-proofing for when a domain wants its own CLI tools.)
+    param([switch]$Upgrade)
     $configFile = "$ScriptDir\plugins.json"
     if (-not (Test-Path $configFile)) { return }
     try { $config = Get-Content $configFile -Raw | ConvertFrom-Json } catch { return }
     if (-not $config.tools) { return }
 
     $entries = @()
-    if ($config.tools.global)            { $entries += @($config.tools.global) }
-    if ($Domain -and $config.tools.$Domain) { $entries += @($config.tools.$Domain) }
+    if ($config.tools.global) { $entries += @($config.tools.global) }
+    foreach ($d in $config.tools.PSObject.Properties.Name) {
+        if ($d -eq 'global') { continue }
+        if ($config.tools.$d) { $entries += @($config.tools.$d) }
+    }
     if ($entries.Count -eq 0) { return }
 
     foreach ($t in $entries) {
@@ -1154,7 +1207,6 @@ function Install-Tools {
 }
 
 function Test-Installation {
-    param([string]$Domain)
     # Primary signal: failures captured from claude plugin install exit codes
     if ($script:InstallFailures.Count -gt 0) {
         return ,@($script:InstallFailures)
@@ -1171,11 +1223,15 @@ function Test-Installation {
     } catch {
         return ,@()
     }
+    # Build expected: globals + EVERY domain's plugins (the per-session-domain
+    # design installs all of them at setup, so verification covers all of them).
     $expected = @()
     $globals = Read-PluginConfig -Section "global"
     if ($globals) { $expected += @($globals) }
-    $domainPlugins = Read-PluginConfig -Section $Domain
-    if ($domainPlugins) { $expected += @($domainPlugins) }
+    foreach ($dom in (Get-DomainNames)) {
+        $domainPlugins = Read-PluginConfig -Section $dom
+        if ($domainPlugins) { $expected += @($domainPlugins) }
+    }
 
     $missing = @()
     foreach ($entry in $expected) {
@@ -1204,71 +1260,48 @@ function Show-VerificationReport {
     Write-Host ""
 }
 
-function Invoke-DomainSwitch {
-    param([string]$OldDomain, [string]$NewDomain)
-    if (-not $OldDomain -or $OldDomain -eq $NewDomain) { return }
-    $oldPlugins = Read-PluginConfig -Section $OldDomain
-    if (-not $oldPlugins -or @($oldPlugins).Count -eq 0) {
-        Write-Info "Domain switch '$OldDomain' -> '$NewDomain': no $OldDomain-specific plugins to remove."
-        return
-    }
-    Write-Info "Domain switch '$OldDomain' -> '$NewDomain': removing $OldDomain-specific plugins..."
-    foreach ($p in $oldPlugins) {
-        if (-not $p.marketplace) { continue }
-        $key = "$($p.name)@$($p.marketplace)"
-        $existingVersion = Test-PluginInstalled $key
-        if ($existingVersion) {
-            Write-Info "  [REMOVE] $key (v$existingVersion)"
-            claude plugin uninstall $key --scope user 2>&1 | Out-Null
-            $global:LASTEXITCODE = 0
-        }
-    }
-    # Note: global plugins, raw skills, and CLI tools are intentionally NOT
-    # removed — they're shared across domains and the new domain's install pass
-    # will refresh them via the same install-or-update logic in Install-Plugin.
-}
+# Invoke-DomainSwitch removed: per-session domain selection means no machine-
+# wide "current domain" exists at install time. Domains are not uninstalled
+# during reinstall because every domain's plugins are always installed.
 
 function Invoke-Update {
-    Write-Info "Updating AI Sherpa..."
+    Write-Info "Updating AI Sherpa (all domains)..."
 
-    # Recall which domain the user picked at install time (state file written
-    # by Write-AiSherpaState). If we can't find it, fall back to "global only":
-    # only refresh global plugins/skills/tools, since we don't know which
-    # domain the user is on.
-    $savedDomain = Get-AiSherpaDomain
-    if ($savedDomain) {
-        Write-Info "Recalled domain '$savedDomain' from previous install."
-    } else {
-        Write-Warn "No saved domain found. Updating global plugins/skills/tools only."
-        Write-Warn "Re-run setup.bat (not --update) once to pick a domain and record state."
-    }
+    # No more saved domain to recall — every install covers every domain.
 
-    # Refresh marketplace caches so `claude plugin update` sees latest versions.
-    Register-Marketplaces -Domain $savedDomain
+    Register-Marketplaces
 
-    # Update plugins: globals always, plus the saved domain's plugins.
+    # Update plugins: globals + every domain's.
     $plugins = Read-PluginConfig -Section "global"
     foreach ($entry in $plugins) {
-        Write-Info "Updating $($entry.name)..."
+        Write-Info "Updating $($entry.name) (global)..."
         claude plugin update $entry.name
     }
-    if ($savedDomain) {
-        $domainPlugins = Read-PluginConfig -Section $savedDomain
+    foreach ($dom in (Get-DomainNames)) {
+        $domainPlugins = Read-PluginConfig -Section $dom
         foreach ($entry in $domainPlugins) {
-            Write-Info "Updating $($entry.name) ($savedDomain)..."
+            Write-Info "Updating $($entry.name) ($dom)..."
             claude plugin update $entry.name
         }
     }
 
-    # Re-clone raw-skills repos for the saved domain (clone overwrites).
-    Install-Skills -Domain $savedDomain
+    # Re-clone raw-skills repos (globals + every domain, single pass — clone overwrites).
+    Install-Skills
 
-    # Upgrade tools: pip --upgrade / cargo --force / git pull.
-    Install-Tools -Domain $savedDomain -Upgrade
+    # Upgrade tools (pip --upgrade / cargo --force / git pull).
+    Install-Tools -Upgrade
+
+    # Refresh AI Sherpa runtime artifacts (rune cache, hook script, slash-
+    # command skill) — these MAY have changed even when plugins didn't.
+    Copy-DomainRuneCache
+    $hookPath = Write-SessionStartHook
+    Register-SessionStartHook-Settings -HookPath $hookPath
+    Install-AiSherpaSkill
 
     Write-GlobalSettings
-    Write-Info "Update complete. Plugins, skills, and tools refreshed to latest$(if ($savedDomain) { " for domain '$savedDomain'" })."
-    Write-Info "Project CLAUDE.md was NOT modified."
+    Write-AiSherpaState -HookPath $hookPath
+    Write-Info "Update complete. Plugins, skills, tools, and AI Sherpa runtime refreshed."
+    Write-Info "CLAUDE.md was NOT modified."
 }
 
 function Invoke-Uninstall {
@@ -1384,11 +1417,27 @@ function Invoke-Uninstall {
         }
     }
 
-    # 4. Remove AI Sherpa state file (.ai-sherpa-state.json — the saved-domain marker)
-    $stateFile = "$env:USERPROFILE\.claude\.ai-sherpa-state.json"
-    if (Test-Path $stateFile) {
-        Write-Info "Removing AI Sherpa state file..."
-        Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
+    # 4. Remove AI Sherpa runtime directory (~/.claude/ai-sherpa/) which holds
+    # state.json, the SessionStart hook script, and the runtime domain rule
+    # cache. Also remove the legacy state file from older versions, plus the
+    # /ai-sherpa-domains slash-command skill. Per-project ai-sherpa-domains.json
+    # files in user projects are NOT touched — those are user artifacts.
+    $aishRuntime = "$env:USERPROFILE\.claude\ai-sherpa"
+    if (Test-Path $aishRuntime) {
+        Write-Info "Removing AI Sherpa runtime directory ($aishRuntime)..."
+        Remove-Item $aishRuntime -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $legacyState = "$env:USERPROFILE\.claude\.ai-sherpa-state.json"
+    foreach ($f in @($legacyState, "$legacyState.legacy")) {
+        if (Test-Path $f) {
+            Write-Info "Removing legacy state file ($f)..."
+            Remove-Item $f -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $aishSkill = "$env:USERPROFILE\.claude\skills\ai-sherpa-domains"
+    if (Test-Path $aishSkill) {
+        Write-Info "Removing /ai-sherpa-domains slash-command skill..."
+        Remove-Item $aishSkill -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     # 5. Restore (or remove) settings.json and CLAUDE.md
@@ -1432,29 +1481,224 @@ function Invoke-Uninstall {
 }
 
 function Print-Summary {
-    param([string]$Domain, [switch]$UserLevel)
+    param([switch]$UserLevel)
+    $domainCount = @(Get-DomainNames).Count
     Write-Host ""
     Write-Host "======================================================" -ForegroundColor Cyan
     Write-Host "  AI Sherpa Setup Complete" -ForegroundColor Cyan
     Write-Host "======================================================" -ForegroundColor Cyan
-    Write-Host "  Domain:   $Domain"
-    Write-Host "  Settings: $env:USERPROFILE\.claude\settings.json"
+    Write-Host "  Domains installed: $domainCount (all)"
+    Write-Host "  Settings:          $env:USERPROFILE\.claude\settings.json"
+    Write-Host "  Runtime cache:     $env:USERPROFILE\.claude\ai-sherpa\"
     if ($UserLevel) {
-        Write-Host "  Rules:    $env:USERPROFILE\.claude\CLAUDE.md  (all projects)"
+        Write-Host "  Core rules:        $env:USERPROFILE\.claude\CLAUDE.md  (all projects)"
     } else {
         $here = Get-Location
-        Write-Host "  Settings: $here\.claude\settings.json  (project)"
-        Write-Host "  Rules:    $here\CLAUDE.md  (this project)"
+        Write-Host "  Project settings:  $here\.claude\settings.json"
+        Write-Host "  Core rules:        $here\CLAUDE.md  (this project)"
     }
     Write-Host ""
-    Write-Host "  Next steps:"
-    Write-Host "  1. Start Claude Code:   claude"
-    Write-Host "  2. Code-review graph runs in auto-mode via SessionStart hook (no manual step)."
-    Write-Host "  3. Start coding -- AI Sherpa rules are active automatically"
+    Write-Host "  How domain selection works now:"
+    Write-Host "  - Open Claude Code in any project."
+    Write-Host "  - The SessionStart hook auto-detects domains from the project's"
+    Write-Host "    files (package.json, west.yml, Dockerfile, ...) and activates"
+    Write-Host "    the matching rule sets."
+    Write-Host "  - If detection finds nothing, Claude asks you to pick."
+    Write-Host "  - Change anytime with: /ai-sherpa-domains"
     Write-Host ""
     Write-Host "  Update later: `"$ScriptDir\setup.bat`" --update"
     Write-Host "======================================================" -ForegroundColor Cyan
     Write-Host ""
+}
+
+# ----- per-session domain selection: runtime install helpers -----
+
+# Enumerate all domain names declared under plugins.json/domains. Returns an
+# array of strings (e.g. "embedded","web",...) suitable for foreach loops.
+function Get-DomainNames {
+    $configFile = "$ScriptDir\plugins.json"
+    if (-not (Test-Path $configFile)) { return @() }
+    try { $config = Get-Content $configFile -Raw | ConvertFrom-Json }
+    catch { return @() }
+    if (-not $config.domains) { return @() }
+    return @($config.domains.PSObject.Properties.Name)
+}
+
+# Resolve an identifier for the AI Sherpa checkout at install time. Prefers
+# `git rev-parse HEAD` inside the script dir; falls back to the literal
+# string "unknown". Used as the `ai_sherpa_version` field in state.json.
+function Get-AiSherpaSpecVersion {
+    if (-not (Test-CommandExists 'git')) { return 'unknown' }
+    try {
+        Push-Location $ScriptDir
+        $sha = (& git rev-parse --short HEAD 2>$null | Out-String).Trim()
+        Pop-Location
+        if ($sha) { return $sha }
+    } catch {}
+    return 'unknown'
+}
+
+# Read the legacy ~/.claude/.ai-sherpa-state.json (old schema, has a top-level
+# `domain` field) and return that field's value, or $null. Used only during
+# migration to surface a one-time advisory to the user — the value is not
+# auto-applied anywhere in the new design.
+function Get-LegacyDomain {
+    $f = "$env:USERPROFILE\.claude\.ai-sherpa-state.json"
+    if (-not (Test-Path $f)) { return $null }
+    try {
+        $j = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($j.domain) { return $j.domain }
+    } catch {}
+    return $null
+}
+
+# Copy every domains/<X>/CLAUDE.md (in the AI Sherpa repo) to the runtime
+# cache at ~/.claude/ai-sherpa/domains/<X>/CLAUDE.md. The SessionStart hook
+# reads these. Overwrites unconditionally so `setup --update` always lands a
+# fresh copy. Reads with -Encoding UTF8 on PS 5.1 to preserve em-dashes.
+function Copy-DomainRuneCache {
+    $src = "$ScriptDir\domains"
+    if (-not (Test-Path $src)) {
+        Write-Warn "domains/ not found at $src - skipping runtime cache copy."
+        return
+    }
+    $dst = "$env:USERPROFILE\.claude\ai-sherpa\domains"
+    if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force | Out-Null }
+    foreach ($dir in (Get-ChildItem -Path $src -Directory)) {
+        $srcFile = Join-Path $dir.FullName 'CLAUDE.md'
+        if (-not (Test-Path $srcFile)) { continue }
+        $dstDir = Join-Path $dst $dir.Name
+        if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Path $dstDir -Force | Out-Null }
+        $content = Get-Content $srcFile -Raw -Encoding UTF8
+        Set-Content -Path (Join-Path $dstDir 'CLAUDE.md') -Value $content -Encoding UTF8
+    }
+    Write-Info "Copied domain rule cache to $dst (1 per declared domain)."
+}
+
+# Copy the repo's hooks/sessionstart.js into the user's runtime directory and
+# return the absolute destination path. The path is recorded in state.json
+# and used by Register-SessionStartHook-Settings so settings.json embeds an
+# unambiguous absolute path (no ~ expansion ambiguity at hook invocation).
+function Write-SessionStartHook {
+    $src = "$ScriptDir\hooks\sessionstart.js"
+    if (-not (Test-Path $src)) {
+        Write-Err "Hook source not found at $src - cannot install the SessionStart hook."
+        return $null
+    }
+    $dstDir = "$env:USERPROFILE\.claude\ai-sherpa\hooks"
+    if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Path $dstDir -Force | Out-Null }
+    $dst = Join-Path $dstDir 'sessionstart.js'
+    Copy-Item -Path $src -Destination $dst -Force
+    Write-Info "Installed SessionStart hook at $dst"
+    return $dst
+}
+
+# Merge a SessionStart hook entry into ~/.claude/settings.json. Idempotent:
+# checks for an existing entry whose `command` already invokes our hook
+# script and skips append if found. Preserves any other hook entries
+# (notably the code-review-graph one shipped by settings-template.json).
+function Register-SessionStartHook-Settings {
+    param([string]$HookPath)
+    if (-not $HookPath) { return }
+    $settingsFile = "$env:USERPROFILE\.claude\settings.json"
+    if (-not (Test-Path $settingsFile)) {
+        Write-Warn "settings.json not found at $settingsFile - hook entry not registered. Re-run setup."
+        return
+    }
+    $raw = Get-Content $settingsFile -Raw -Encoding UTF8
+    try { $json = $raw | ConvertFrom-Json }
+    catch {
+        Write-Warn "Could not parse $settingsFile - hook entry not registered. Edit the file manually."
+        return
+    }
+
+    if (-not $json.hooks) {
+        $json | Add-Member -NotePropertyName 'hooks' -NotePropertyValue ([pscustomobject]@{}) -Force
+    }
+    if (-not $json.hooks.SessionStart) {
+        $json.hooks | Add-Member -NotePropertyName 'SessionStart' -NotePropertyValue @() -Force
+    }
+    $existing = @($json.hooks.SessionStart)
+
+    # Idempotency check: an entry already routes to our hook iff any of its
+    # inner `hooks[].command` strings reference 'ai-sherpa\\hooks\\sessionstart.js'
+    # (or the POSIX equivalent for cross-platform safety).
+    $needle1 = 'ai-sherpa\hooks\sessionstart.js'
+    $needle2 = 'ai-sherpa/hooks/sessionstart.js'
+    $already = $false
+    foreach ($entry in $existing) {
+        if (-not $entry.hooks) { continue }
+        foreach ($inner in @($entry.hooks)) {
+            $cmd = "$($inner.command)"
+            if ($cmd -and ($cmd.Contains($needle1) -or $cmd.Contains($needle2))) {
+                $already = $true; break
+            }
+        }
+        if ($already) { break }
+    }
+    if ($already) {
+        Write-Info "SessionStart hook entry already present in settings.json - skipping."
+        return
+    }
+
+    # Append a new entry. Quote the path because Windows paths may contain
+    # spaces; ConvertTo-Json's default depth (2) loses nested objects, so
+    # we use -Depth 10.
+    $commandStr = 'node "{0}"' -f $HookPath
+    $newEntry = [pscustomobject]@{
+        matcher = 'startup|resume|clear|compact'
+        hooks   = @(
+            [pscustomobject]@{
+                type    = 'command'
+                command = $commandStr
+                timeout = 10000
+            }
+        )
+    }
+    $json.hooks.SessionStart = @($existing + $newEntry)
+    $out = ($json | ConvertTo-Json -Depth 10)
+    Set-Content -Path $settingsFile -Value $out -Encoding UTF8
+    Write-Info "Registered SessionStart hook in $settingsFile"
+}
+
+# Copy the repo's skills/ai-sherpa-domains/ into ~/.claude/skills/ so users
+# can invoke /ai-sherpa-domains. Overwrites unconditionally on every install
+# and --update so the SKILL.md stays current.
+function Install-AiSherpaSkill {
+    $src = "$ScriptDir\skills\ai-sherpa-domains"
+    if (-not (Test-Path $src)) {
+        Write-Warn "Slash-command skill source not found at $src - skipping."
+        return
+    }
+    $dstParent = "$env:USERPROFILE\.claude\skills"
+    if (-not (Test-Path $dstParent)) { New-Item -ItemType Directory -Path $dstParent -Force | Out-Null }
+    $dst = Join-Path $dstParent 'ai-sherpa-domains'
+    if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force | Out-Null }
+    Copy-Item -Path (Join-Path $src '*') -Destination $dst -Recurse -Force
+    Write-Info "Installed /ai-sherpa-domains skill at $dst"
+}
+
+# Write a project-local selection file for the AI Sherpa repo itself, so
+# working ON AI Sherpa always loads a known stable domain set without
+# triggering the auto-detect banner on every conversation. Idempotent:
+# only writes if the file doesn't exist (respects user edits).
+function Install-AiSherpaProjectFile {
+    $projectClaude = "$ScriptDir\.claude"
+    $target = Join-Path $projectClaude 'ai-sherpa-domains.json'
+    if (Test-Path $target) {
+        Write-Info "$target already exists - leaving it as the user configured."
+        return
+    }
+    if (-not (Test-Path $projectClaude)) { New-Item -ItemType Directory -Path $projectClaude -Force | Out-Null }
+    $obj = [ordered]@{
+        version        = 1
+        domains        = @('devops')
+        detected       = $false
+        user_confirmed = $true
+        updated_at     = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    }
+    ($obj | ConvertTo-Json) | Set-Content -Path $target -Encoding UTF8
+    Write-Info "Seeded $target with default domains for AI Sherpa repo work."
 }
 
 # --- Main ---
@@ -1471,15 +1715,9 @@ if ($Uninstall) {
 }
 
 
-# Detect whether this is a user-level (double-click) or project-level run
+# Detect whether this is a user-level (double-click) or project-level run.
 $currentPath = (Get-Location).Path
 $isUserLevelRun = ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath -eq $ScriptDir))
-
-$domainMap = @{
-    "1"="embedded"; "2"="web"; "3"="data"; "4"="devops";
-    "5"="marketing"; "6"="sales"; "7"="finance"; "8"="service"; "9"="procurement";
-    "10"="ai"; "11"="frontend"
-}
 
 # Prerequisites (both paths)
 Write-Info "Checking prerequisites..."
@@ -1491,95 +1729,86 @@ Install-NodeJS
 Install-Git
 Install-ClaudeCode
 
-# Domain selection (both paths)
-Write-Host ""
-Write-Host "Which domain are you working in?"
-Write-Host "  --- Engineering ---"
-Write-Host "  [1] Embedded Software (C/C++, firmware, RTOS)"
-Write-Host "  [2] Web (full-stack: frontend + backend + UI/UX)"
-Write-Host "  [3] Data Science / ML"
-Write-Host "  [4] DevOps / Platform"
-Write-Host "  --- Business ---"
-Write-Host "  [5] Marketing"
-Write-Host "  [6] Sales"
-Write-Host "  [7] Finance / Accounting"
-Write-Host "  [8] Customer Service / Support"
-Write-Host "  [9] Procurement / Operations"
-Write-Host "  --- AI & UI/UX ---"
-Write-Host "  [10] AI / ML Agents (RAG, evals, prompt engineering)"
-Write-Host "  [11] Frontend + UI/UX"
-Write-Host ""
-$domainChoice = Read-Host "Enter number [1-11]"
-if (-not $domainMap.ContainsKey($domainChoice)) {
-    Write-Err "Invalid choice: $domainChoice. Run setup.bat again."
-    exit 1
-}
-$domain = $domainMap[$domainChoice]
+# Per-session domain selection: NO install-time prompt anymore. Setup installs
+# every domain's plugins and the SessionStart hook picks the active set per
+# project at conversation start. See
+# docs/superpowers/specs/2026-06-01-per-session-domain-selection-design.md.
 
-# Auto-detect whether this is a fresh install or a re-run. The presence of
-# ~/.claude/.ai-sherpa-state.json (written by Write-AiSherpaState at the end of
-# a successful install) is the signal. On re-run:
-#   - same domain  -> Install-Plugin per-entry chooses update vs install
-#   - new  domain  -> uninstall old-domain plugins first, then install new ones
-# This removes the need to pass --update explicitly for the common case.
-$savedDomain = Get-AiSherpaDomain
-$isReinstall = $null -ne $savedDomain
-if ($isReinstall) {
-    if ($savedDomain -eq $domain) {
-        Write-Info "AI Sherpa already installed for domain '$domain'. Re-running:"
-        Write-Info "  - existing plugins will be UPDATED to latest"
-        Write-Info "  - any new entries in plugins.json will be installed fresh"
-        Write-Info "  - CLI tools will be upgraded"
-    } else {
-        Write-Info "AI Sherpa already installed for domain '$savedDomain'. Switching to '$domain'."
-        Invoke-DomainSwitch -OldDomain $savedDomain -NewDomain $domain
-    }
-} else {
-    Write-Info "AI Sherpa not installed yet — running fresh install for domain '$domain'."
+# Migration: if a legacy ~/.claude/.ai-sherpa-state.json exists (with a top-
+# level `domain` field), surface a one-time advisory and rename the file as a
+# paper trail so it doesn't shadow the new state.json schema.
+$legacyDomain = Get-LegacyDomain
+$legacyStateFile = "$env:USERPROFILE\.claude\.ai-sherpa-state.json"
+if ($legacyDomain) {
+    Write-Info "Detected legacy install with domain='$legacyDomain'."
+    Write-Info "Migrating to per-conversation domain selection..."
+    Add-UserAction -Title "Heads up: domain selection moved to per-project" `
+                   -Why "Your previous AI Sherpa install used domain='$legacyDomain' system-wide. Going forward, each project picks its own domain(s). The first conversation you open in any project will auto-detect (or ask if detection finds nothing). Use /ai-sherpa-domains inside Claude Code to override." `
+                   -Command "(no immediate action required — heads-up only)"
 }
 
-# Register extra marketplaces + install skills (both paths)
-Register-Marketplaces -Domain $domain
+# Plugins / skills / tools — install global + ALL domains.
+Register-Marketplaces
 Install-CoreSkills
-Install-DomainSkills $domain
-Install-Skills -Domain $domain
+foreach ($dom in (Get-DomainNames)) {
+    Install-DomainSkills $dom
+}
+foreach ($dom in (Get-DomainNames)) {
+    Install-Skills -Domain $dom
+}
 Write-GlobalSettings
 
-# Embedded-specific: probe for toolchains, flashers, debuggers and record them
-# so Claude can issue concrete build/flash/debug commands instead of generic prose.
-if ($domain -eq "embedded") {
-    $detectScript = "$ScriptDir\scripts\detect-embedded-toolchain.ps1"
-    if (Test-Path $detectScript) {
-        Write-Info "Detecting embedded toolchain and flashing tools..."
-        & $detectScript -TargetHome $env:USERPROFILE
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "Toolchain detection script exited non-zero. embedded-toolchain.json may be incomplete."
-        }
-    } else {
-        Write-Warn "Toolchain detection script not found at $detectScript"
+# Embedded toolchain probing is now UNCONDITIONAL (every domain is installed,
+# so embedded tools are always potentially relevant).
+$detectScript = "$ScriptDir\scripts\detect-embedded-toolchain.ps1"
+if (Test-Path $detectScript) {
+    Write-Info "Detecting embedded toolchain and flashing tools..."
+    & $detectScript -TargetHome $env:USERPROFILE
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Toolchain detection script exited non-zero. embedded-toolchain.json may be incomplete."
     }
+} else {
+    Write-Warn "Toolchain detection script not found at $detectScript"
 }
 
+# AI Sherpa runtime artifacts.
+Copy-DomainRuneCache
+$hookPath = Write-SessionStartHook
+
 if ($isUserLevelRun) {
-    # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
-    Write-GlobalClaudeMd $domain
+    # User-level: write core CLAUDE.md to ~/.claude/ (no domain merge).
+    Write-CoreOnlyClaudeMd
+    Register-SessionStartHook-Settings -HookPath $hookPath
+    Install-AiSherpaSkill
     Enable-WindowsLongPaths
-    Install-Tools -Domain $domain -Upgrade:$isReinstall
-    Write-AiSherpaState -Domain $domain
-    $missing = Test-Installation $domain
+    # No auto-Upgrade on plain re-runs. Install-PyPiTool / Install-CargoTool
+    # skip tools that are already on PATH; explicit upgrades go through
+    # `setup.bat --update` (Invoke-Update at line ~1230 sets -Upgrade).
+    Install-Tools
+    Write-AiSherpaState -HookPath $hookPath
+    Install-AiSherpaProjectFile
+
+    # Migration paper-trail: rename legacy state file AFTER the new one is in
+    # place so a failed install doesn't lose the user's old marker.
+    if ($legacyDomain -and (Test-Path $legacyStateFile)) {
+        Move-Item $legacyStateFile "$legacyStateFile.legacy" -Force -ErrorAction SilentlyContinue
+        Write-Info "Renamed legacy state file to $legacyStateFile.legacy"
+    }
+
+    $missing = Test-Installation
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing
         Show-SkippedStepsReport
         Show-UserActionsReport
-        Print-Summary $domain -UserLevel
+        Print-Summary -UserLevel
         exit 1
     }
     Write-Info "All expected plugins verified in installed_plugins.json."
     Show-SkippedStepsReport
     Show-UserActionsReport
-    Print-Summary $domain -UserLevel
+    Print-Summary -UserLevel
 } else {
-    # Project-level: write CLAUDE.md and settings into current project directory
+    # Project-level: write core CLAUDE.md + settings into current project dir.
     Write-Host ""
     Write-Host "New project or existing project?"
     Write-Host "  [1] New project"
@@ -1593,20 +1822,33 @@ if ($isUserLevelRun) {
     }
     $projectType = $ptMap[$projectChoice]
     Write-ProjectSettings
-    Copy-ClaudeMd $domain $projectType
+    Copy-CoreOnlyClaudeMd-ToProject $projectType
+    # The hook is global by nature (~/.claude/settings.json). Register it
+    # here too so a project-level run is sufficient to wire everything up.
+    Register-SessionStartHook-Settings -HookPath $hookPath
+    Install-AiSherpaSkill
     Enable-WindowsLongPaths
-    Install-Tools -Domain $domain -Upgrade:$isReinstall
-    Write-AiSherpaState -Domain $domain
-    $missing = Test-Installation $domain
+    # No auto-Upgrade on plain re-runs. Install-PyPiTool / Install-CargoTool
+    # skip tools that are already on PATH; explicit upgrades go through
+    # `setup.bat --update` (Invoke-Update at line ~1230 sets -Upgrade).
+    Install-Tools
+    Write-AiSherpaState -HookPath $hookPath
+
+    if ($legacyDomain -and (Test-Path $legacyStateFile)) {
+        Move-Item $legacyStateFile "$legacyStateFile.legacy" -Force -ErrorAction SilentlyContinue
+        Write-Info "Renamed legacy state file to $legacyStateFile.legacy"
+    }
+
+    $missing = Test-Installation
     if ($missing.Count -gt 0) {
         Show-VerificationReport $missing
         Show-SkippedStepsReport
         Show-UserActionsReport
-        Print-Summary $domain
+        Print-Summary
         exit 1
     }
     Write-Info "All expected plugins verified in installed_plugins.json."
     Show-SkippedStepsReport
     Show-UserActionsReport
-    Print-Summary $domain
+    Print-Summary
 }
