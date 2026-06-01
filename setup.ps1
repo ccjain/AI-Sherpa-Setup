@@ -1753,9 +1753,7 @@ Install-CoreSkills
 foreach ($dom in (Get-DomainNames)) {
     Install-DomainSkills $dom
 }
-foreach ($dom in (Get-DomainNames)) {
-    Install-Skills -Domain $dom
-}
+Install-Skills
 Write-GlobalSettings
 
 # Embedded toolchain probing is now UNCONDITIONAL (every domain is installed,

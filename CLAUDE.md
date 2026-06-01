@@ -73,7 +73,43 @@ node scripts/lint-invocation-tables.js
 ```
 
 Do NOT put global plugin rules in domain files, or domain plugin rules in
-core. The merge of core + chosen-domain happens at user setup time.
+core. Domain-level rules are loaded **per-session** at conversation start by
+the SessionStart hook (see "Per-session domain selection" below), not merged
+into `~/.claude/CLAUDE.md` at install time anymore.
 
 See `docs/superpowers/specs/2026-05-29-plugin-invocation-contracts-design.md`
-for the full design.
+for the invocation contracts design.
+
+---
+
+## Per-session domain selection — runtime layout
+
+As of `docs/superpowers/specs/2026-06-01-per-session-domain-selection-design.md`,
+the install-time domain prompt is gone. Setup installs every domain's plugins
+unconditionally, and a SessionStart hook activates the relevant domain rules
+for each conversation based on per-project state.
+
+Runtime artifacts that setup writes:
+
+- `~/.claude/ai-sherpa/state.json` — install manifest (domains installed,
+  marketplaces registered, hook path, version). New schema; the old
+  `~/.claude/.ai-sherpa-state.json` with a top-level `domain` field is
+  deprecated and renamed to `.legacy` on first run.
+- `~/.claude/ai-sherpa/domains/<X>/CLAUDE.md` — runtime cache of each
+  declared domain's rules. The hook concatenates the ones the project picked.
+- `~/.claude/ai-sherpa/hooks/sessionstart.js` — the Node hook script that
+  reads `<cwd>/.claude/ai-sherpa-domains.json` (per-project selection),
+  falls back to file-fingerprint detection, and emits the chosen domains'
+  rules as a system reminder. Source of truth: `hooks/sessionstart.js` in
+  this repo.
+- `~/.claude/skills/ai-sherpa-domains/SKILL.md` — slash command for
+  re-selecting domains mid-conversation. Source: `skills/ai-sherpa-domains/`.
+
+The hook entry in `~/.claude/settings.json` lives alongside the existing
+code-review-graph hook entry; setup's `Register-SessionStartHook-Settings` /
+`register_session_start_hook_settings` merges it in idempotently.
+
+When editing the hook or the slash-command skill, edit the repo source
+(`hooks/sessionstart.js` / `skills/ai-sherpa-domains/SKILL.md`) and re-run
+`setup.bat --update` (or `setup.sh --update`) — setup copies them into
+`~/.claude/ai-sherpa/` and `~/.claude/skills/` on every install/update pass.

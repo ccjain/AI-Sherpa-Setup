@@ -642,9 +642,27 @@ process.stdin.on('end', () => {
 }
 
 install_skills() {
-  local domain="${1:-}"
+  # Per-session-domain-selection: install globals + every per-domain skills
+  # section in one pass. Avoids N-times-redundant clone the per-domain loop
+  # would otherwise cause.
+  local config_file="$SCRIPT_DIR/plugins.json"
+  [[ -f "$config_file" ]] || return 0
   local entries
-  entries=$(_read_skills "$domain")
+  entries=$(node -e "
+let raw='';process.stdin.setEncoding('utf8');
+process.stdin.on('data',d=>raw+=d);
+process.stdin.on('end',()=>{
+  let c;try{c=JSON.parse(raw)}catch(e){process.exit(0)}
+  const s=c.skills||{};
+  let es=[].concat(s.global||[]);
+  for(const k of Object.keys(s)){if(k==='global')continue;es=es.concat(s[k]||[]);}
+  es.forEach(e=>{
+    const repo=e.repo||'';
+    const subpath=e.subpath||'skills';
+    if(repo) process.stdout.write(repo+'|'+subpath+'\n');
+  });
+});
+" < "$config_file")
   [[ -z "$entries" ]] && return 0
 
   if ! check_command git; then
@@ -1266,11 +1284,8 @@ run_update() {
     done <<< "$domain_plugins"
   done <<< "$(get_domain_names)"
 
-  # Re-clone raw skills for every domain (clone overwrites)
-  while IFS= read -r dom; do
-    [[ -z "$dom" ]] && continue
-    install_skills "$dom"
-  done <<< "$(get_domain_names)"
+  # Re-clone raw skills (globals + every domain, single pass — clone overwrites)
+  install_skills
 
   # Upgrade tools: pip --upgrade / cargo --force / git pull (one pass — install_tools
   # now installs globals + every per-domain tools section)
@@ -1590,10 +1605,7 @@ main() {
     [[ -z "$dom" ]] && continue
     install_domain_skills "$dom"
   done <<< "$(get_domain_names)"
-  while IFS= read -r dom; do
-    [[ -z "$dom" ]] && continue
-    install_skills "$dom"
-  done <<< "$(get_domain_names)"
+  install_skills
   write_settings
 
   # --- CLAUDE.md (core-only) ---
