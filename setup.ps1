@@ -309,6 +309,26 @@ function Read-PluginConfig {
     return @()
 }
 
+# Defensively enable a plugin after install / update. `claude plugin install`
+# enables by default, but a re-install of a previously-disabled plugin can stay
+# disabled. Explicit enable is idempotent and guarantees the post-setup state
+# is [ON] for every plugin the user installed. If enable itself fails, the
+# plugin will load in a disabled state — surface as ACTION REQUIRED so the
+# user sees it in the end-of-run summary.
+function Enable-Plugin {
+    param([string]$Spec)
+    & claude plugin enable $Spec 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Action "$Spec installed but 'claude plugin enable' returned exit $LASTEXITCODE - the plugin may load disabled."
+        Add-UserAction -Title "Activate plugin $Spec" `
+                       -Why "Setup installed the plugin but the explicit 'claude plugin enable' call exited non-zero. Without enable, Claude Code may load the plugin in a disabled state and skills/commands from it won't fire." `
+                       -Command "claude plugin enable $Spec"
+        $global:LASTEXITCODE = 0
+    } else {
+        Write-Info "  [ENABLE] $Spec activated"
+    }
+}
+
 function Install-Plugin {
     param($Entry)
     if ($Entry.marketplace) {
@@ -324,12 +344,15 @@ function Install-Plugin {
                 Write-Warn "  $key update returned exit $LASTEXITCODE (continuing)."
                 $global:LASTEXITCODE = 0
             }
+            Enable-Plugin $key
         } else {
             Write-Info "  [NEW]    $key installing..."
             claude plugin install $key --scope user
             if ($LASTEXITCODE -ne 0) {
                 Write-Warn "  $($Entry.name) install failed - see error above."
                 Add-InstallFailure $key
+            } else {
+                Enable-Plugin $key
             }
         }
     } elseif ($Entry.github) {
@@ -352,6 +375,7 @@ function Install-Plugin {
                 Write-Warn "  $($Entry.name) update returned exit $LASTEXITCODE (continuing)."
                 $global:LASTEXITCODE = 0
             }
+            Enable-Plugin $Entry.name
         } else {
             Write-Info "  [NEW]    $($Entry.name) installing from github: $($Entry.github)..."
             try { & claude plugin marketplace add "https://github.com/$($Entry.github)" 2>&1 | Out-Null } catch {}
@@ -360,6 +384,8 @@ function Install-Plugin {
             if ($LASTEXITCODE -ne 0) {
                 Write-Warn "  $($Entry.name) install failed - see error above."
                 Add-InstallFailure "$($Entry.name)"
+            } else {
+                Enable-Plugin $Entry.name
             }
         }
     }

@@ -271,19 +271,40 @@ process.stdin.on('end', () => {
 }
 
 # Install one plugin entry (args: type name source)
+# Defensively enable a plugin after install. `claude plugin install` enables by
+# default, but a re-install of a previously-disabled plugin can stay disabled.
+# Explicit enable is idempotent and guarantees the post-setup state is [ON].
+# On enable failure, surface as ACTION REQUIRED so the user sees it in the
+# end-of-run summary.
+_enable_plugin() {
+  local spec="$1"
+  if claude plugin enable "$spec" 2>/dev/null; then
+    log_info "  [ENABLE] $spec activated"
+  else
+    log_action "$spec installed but 'claude plugin enable' failed — the plugin may load disabled."
+    add_user_action "Activate plugin $spec" \
+      "Setup installed the plugin but the explicit 'claude plugin enable' call failed. Without enable, Claude Code may load the plugin in a disabled state and skills/commands from it won't fire." \
+      "claude plugin enable $spec"
+  fi
+}
+
 _install_plugin() {
   local type="$1" name="$2" source="$3"
   if [[ "$type" == "marketplace" ]]; then
     if ! claude plugin install "$name@$source" --scope user; then
       log_warn "$name install failed — see error above."
       add_install_failure "$name@$source"
+      return
     fi
+    _enable_plugin "$name@$source"
   elif [[ "$type" == "github" ]]; then
     claude plugin marketplace add "https://github.com/$source" 2>/dev/null || true
     if ! claude plugin install "$name" --scope user; then
       log_warn "$name install failed — see error above."
       add_install_failure "$name"
+      return
     fi
+    _enable_plugin "$name"
   fi
 }
 
