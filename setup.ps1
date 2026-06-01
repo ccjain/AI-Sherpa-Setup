@@ -544,14 +544,16 @@ function Copy-ClaudeMd {
         exit 1
     }
     $target = "$(Get-Location)\CLAUDE.md"
-    $coreContent   = (Get-Content $core -Raw).TrimEnd()
-    $domainContent = (Get-Content $domain -Raw)
+    # -Encoding UTF8 on Get-Content is REQUIRED on PowerShell 5.1 (see comment
+    # in Write-GlobalClaudeMd above).
+    $coreContent   = (Get-Content $core -Raw -Encoding UTF8).TrimEnd()
+    $domainContent = (Get-Content $domain -Raw -Encoding UTF8)
     $merged = $coreContent + "`r`n`r`n---`r`n`r`n" + $domainContent
     if ($ProjectType -eq "existing" -and (Test-Path $target)) {
         Write-Warn "Appending AI Sherpa rules to existing CLAUDE.md (original preserved)"
-        Add-Content $target "`n---"
-        Add-Content $target "<!-- AI Sherpa core + $Domain rules - do not edit below this line -->"
-        Add-Content $target $merged
+        Add-Content $target "`n---" -Encoding UTF8
+        Add-Content $target "<!-- AI Sherpa core + $Domain rules - do not edit below this line -->" -Encoding UTF8
+        Add-Content $target $merged -Encoding UTF8
     } else {
         Set-Content -Path $target -Value $merged -Encoding UTF8
     }
@@ -602,8 +604,12 @@ function Write-GlobalClaudeMd {
     }
     # Merge: core rules first, then the chosen domain's rules. Universal guidance
     # reads first, domain refines on top. Separator makes the boundary obvious.
-    $coreContent   = (Get-Content $core -Raw).TrimEnd()
-    $domainContent = (Get-Content $domain -Raw)
+    # -Encoding UTF8 on Get-Content is REQUIRED on PowerShell 5.1: the default
+    # codepage is system ANSI (Windows-1252 in en-US), which mangles UTF-8 chars
+    # like em-dashes (— -> â€") at read time. Write-side -Encoding UTF8 alone
+    # is not enough because the corruption happens before the write.
+    $coreContent   = (Get-Content $core -Raw -Encoding UTF8).TrimEnd()
+    $domainContent = (Get-Content $domain -Raw -Encoding UTF8)
     $merged = $coreContent + "`r`n`r`n---`r`n`r`n" + $domainContent
     Set-Content -Path $target -Value $merged -Encoding UTF8
     Write-Info "Merged core + $Domain rules written to $target (active for all projects)"
