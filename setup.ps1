@@ -331,12 +331,24 @@ function Read-PluginConfig {
 }
 
 # Check installed_plugins.json to see if a plugin is currently enabled.
-# Returns $true if an entry exists for the spec AND it is not explicitly
-# disabled. We read state instead of blindly calling `claude plugin enable`
-# because that command errors with "Plugin is already enabled" when the
-# plugin is already on — and PS 5.1's native command stderr handling
-# displays that error as a scary stack-trace even when our code handles it
-# gracefully. The pre-check eliminates the wasted call entirely.
+# Returns $true ONLY if an explicit marker says "enabled". Returns $false on
+# any uncertainty so Enable-Plugin actually calls `claude plugin enable`.
+#
+# History: this used to optimistically return $true when no marker was
+# present, on the assumption that `claude plugin install` enables by default
+# and `claude plugin disable` would write an explicit "disabled" marker.
+# That assumption is WRONG for the v2 schema currently shipped by Claude
+# Code: install entries carry only {scope, installPath, version,
+# installedAt, lastUpdated, ...} with no enabled/disabled/status field, AND
+# `claude plugin install` does NOT auto-enable in recent CLI versions. The
+# result was that every installed plugin appeared "already active" to setup,
+# the actual `claude plugin enable` call was skipped, and every plugin
+# shipped disabled (seen as `Status: × disabled` across `claude plugin list`).
+#
+# The fix: treat absence-of-marker as "don't know -> let Enable-Plugin try".
+# Enable-Plugin's stderr fallback already pattern-matches 'already enabled'
+# and treats it as success, so the extra CLI call is harmless when the
+# plugin happens to already be on.
 function Test-PluginEnabled {
     param([string]$Spec)
     $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
@@ -346,13 +358,13 @@ function Test-PluginEnabled {
         if (-not $j.plugins) { return $false }
         $entry = $j.plugins.$Spec
         if (-not $entry) { return $false }
-        # Schema across CLI versions varies. Check explicit markers first;
-        # fall back to "entry exists -> enabled" since `claude plugin install`
-        # enables by default and `claude plugin disable` writes a marker.
+        # Schema across CLI versions varies. Only trust EXPLICIT markers;
+        # any other shape (including the current v2 schema which has none
+        # of these fields) must fall through to "let Enable-Plugin try".
         if ($null -ne $entry.enabled)  { return [bool]$entry.enabled }
         if ($null -ne $entry.disabled) { return -not [bool]$entry.disabled }
         if ($null -ne $entry.status)   { return ($entry.status -eq 'enabled') }
-        return $true
+        return $false
     } catch { return $false }
 }
 
@@ -1077,6 +1089,33 @@ function Install-CargoTool {
         return
     }
     Write-Info "$Name ready."
+}
+
+# Install a tool by downloading its pre-built binary from a GitHub release.
+# Required Entry fields (from plugins.json):
+#   - name        : binary name (without .exe; .exe is appended on Windows)
+#   - repo        : "<owner>/<name>" - used to query /repos/<repo>/releases/latest
+#   - asset       : hashtable of platform-arch -> asset filename in the release
+#   - binary      : binary name to look for inside the extracted archive
+#   - destination : install dir (~/.local/bin etc.; ~ is expanded)
+# Optional:
+#   - Upgrade switch: bypass the skip-if-installed gate
+#
+# Decision flow follows spec docs/superpowers/specs/2026-06-02-rtk-github-release-installer-design.md
+# Cases A through H.
+function Install-GitHubReleaseTool {
+    param($Entry, [switch]$Upgrade)
+
+    # CASE A: skip if already installed and not forcing an upgrade.
+    if (-not $Upgrade -and (Test-CommandExists $Entry.name)) {
+        $loc = try { (Get-Command $Entry.name -ErrorAction SilentlyContinue).Source } catch { $null }
+        $locSuffix = if ($loc) { " at $loc" } else { '' }
+        Write-Info "  [SKIP]   $($Entry.name) already installed$locSuffix (run setup.bat --update to upgrade)"
+        return
+    }
+
+    # Subsequent CASES B-H added in later tasks per the plan.
+    Write-Info "  [TODO]   $($Entry.name) - Install-GitHubReleaseTool body pending (Tasks 3-6)"
 }
 
 function Install-GitCloneTool {
