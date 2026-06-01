@@ -275,6 +275,37 @@ fi
 # Restore originals
 unset -f check_command log_info
 
+# --- Test: install_github_release_tool surfaces API failure as ACTION REQUIRED ---
+echo "=== Test: install_github_release_tool API failure (CASE C) ==="
+check_command() { return 1; }
+curl() { return 22; }
+captured_action=()
+captured_user_actions=()
+log_info() { :; }  # silence the "Installing..." line; we only check log_action here
+log_action() { captured_action+=("$*"); }
+add_user_action() { captured_user_actions+=("title=$1; why=$2; cmd=$3"); }
+
+set +e
+fake_entry='{"name":"rtk","repo":"rtk-ai/rtk","asset":{"linux-x64":"rtk-x86_64-unknown-linux-musl.tar.gz"},"binary":"rtk","destination":"/tmp/test-dest"}'
+install_github_release_tool "$fake_entry" "false"
+set -e
+
+if [[ ${#captured_action[@]} -gt 0 ]]; then ok "CASE C: API failure emits log_action"
+else fail "CASE C: API failure emits log_action" "non-empty captured_action" "empty"
+fi
+if [[ ${#captured_user_actions[@]} -gt 0 ]]; then
+  ok "CASE C: API failure adds a user_action"
+  if [[ "${captured_user_actions[0]}" == *"releases"* ]]; then
+    ok "CASE C: user_action command mentions releases page"
+  else
+    fail "CASE C: user_action command mentions releases page" "releases in command" "${captured_user_actions[0]}"
+  fi
+else
+  fail "CASE C: API failure adds a user_action" "non-empty captured_user_actions" "empty"
+fi
+
+unset -f check_command curl log_action add_user_action
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

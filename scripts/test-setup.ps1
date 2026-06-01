@@ -79,6 +79,44 @@ foreach ($line in $script:CapturedInfo) {
 }
 Assert-True "Install-GitHubReleaseTool logs SKIP when already installed" $found
 
+# ----- Test: Install-GitHubReleaseTool surfaces API failure as ACTION REQUIRED -----
+Write-Host "=== Test: Install-GitHubReleaseTool API failure (CASE C) ==="
+
+# Override Test-CommandExists so the tool looks NOT installed (bypass skip gate).
+function Test-CommandExists { param([string]$Cmd) return $false }
+
+# Override Invoke-RestMethod to throw (simulating network / 403 rate limit)
+function Invoke-RestMethod { throw "rate limited (test)" }
+
+# Capture Write-Action output
+$script:CapturedAction = @()
+function Write-Action {
+    param([string]$msg)
+    $script:CapturedAction += $msg
+}
+
+# Capture Add-UserAction calls
+$script:CapturedUserActions = @()
+function Add-UserAction {
+    param([string]$Title, [string]$Why, [string]$Command)
+    $script:CapturedUserActions += [pscustomobject]@{ Title = $Title; Why = $Why; Command = $Command }
+}
+
+$entry = [pscustomobject]@{
+    name = 'rtk'
+    repo = 'rtk-ai/rtk'
+    asset = @{ 'windows-x64' = 'rtk-x86_64-pc-windows-msvc.zip' }
+    binary = 'rtk'
+    destination = "$env:TEMP\test-dest"
+}
+Install-GitHubReleaseTool -Entry $entry
+
+Assert-True "CASE C: API failure -> Write-Action emitted" ($script:CapturedAction.Count -gt 0)
+Assert-True "CASE C: API failure -> Add-UserAction collected" ($script:CapturedUserActions.Count -gt 0)
+if ($script:CapturedUserActions.Count -gt 0) {
+    Assert-Match "CASE C: UserAction Command mentions releases page" 'releases' $script:CapturedUserActions[0].Command
+}
+
 # ----- Summary -----
 Write-Host ""
 Write-Host "Total: $($script:PASS) PASS / $($script:FAIL) FAIL"

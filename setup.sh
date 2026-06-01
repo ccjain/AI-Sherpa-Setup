@@ -981,17 +981,37 @@ install_cargo_tool() {
 #   - destination : install dir (~/.local/bin etc.)
 install_github_release_tool() {
   local entry_json="$1" upgrade="${2:-false}"
-  local name; name=$(echo "$entry_json" | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.name||'')})")
+  local name repo binary destination
+  read -r name repo binary destination <<<"$(echo "$entry_json" | node -e "
+let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const j=JSON.parse(s);
+process.stdout.write([j.name||'',j.repo||'',j.binary||'',j.destination||''].join(' '))})")"
 
   # CASE A: skip if already installed and not forcing an upgrade.
   if [[ "$upgrade" != "true" ]] && check_command "$name"; then
-    local loc; loc=$(command -v "$name" 2>/dev/null)
+    local loc; loc=$(command -v "$name" 2>/dev/null || true)
     log_info "  [SKIP]   $name already installed${loc:+ at $loc} (run setup.sh --update to upgrade)"
     return 0
   fi
 
-  # CASES B-H added in later tasks per the plan.
-  log_info "  [TODO]   $name - install_github_release_tool body pending (Tasks 3-6)"
+  log_info "Installing $name (github-release: $repo)..."
+
+  # Fetch latest release manifest from GitHub.
+  local api_url="https://api.github.com/repos/$repo/releases/latest"
+  local manifest
+  if ! manifest=$(curl --fail --silent --show-error \
+      --user-agent "ai-sherpa-setup" \
+      --connect-timeout 10 --max-time 30 \
+      "$api_url" 2>&1); then
+    # CASE C: API query failed
+    log_action "$name download failed: GitHub API at $api_url returned an error."
+    add_user_action "Manually install $name" \
+      "Setup couldn't reach GitHub's release API for $repo. This is usually transient (rate limit, network), but if it persists check corporate firewall / proxy." \
+      "Download the latest release manually from https://github.com/$repo/releases, extract the binary '$binary' from the platform-appropriate asset, and place it on PATH."
+    return 0
+  fi
+
+  # Subsequent CASES B, D, E, F, G, H added in later tasks per the plan.
+  log_info "  [TODO]   $name - install_github_release_tool body pending (Tasks 4-6)"
 }
 
 install_git_clone_tool() {

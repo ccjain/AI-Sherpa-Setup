@@ -1114,8 +1114,24 @@ function Install-GitHubReleaseTool {
         return
     }
 
-    # Subsequent CASES B-H added in later tasks per the plan.
-    Write-Info "  [TODO]   $($Entry.name) - Install-GitHubReleaseTool body pending (Tasks 3-6)"
+    Write-Info "Installing $($Entry.name) (github-release: $($Entry.repo))..."
+
+    # Fetch latest release manifest from GitHub.
+    $apiUrl = "https://api.github.com/repos/$($Entry.repo)/releases/latest"
+    $manifest = $null
+    try {
+        $manifest = Invoke-RestMethod -Uri $apiUrl -Headers @{ 'User-Agent' = 'ai-sherpa-setup' } -TimeoutSec 30
+    } catch {
+        # CASE C: API query failed (network, 403 rate limit, 5xx)
+        Write-Action "$($Entry.name) download failed: GitHub API at $apiUrl returned an error ($($_.Exception.Message))."
+        Add-UserAction -Title "Manually install $($Entry.name)" `
+                       -Why "Setup couldn't reach GitHub's release API for $($Entry.repo). The API call failed with: $($_.Exception.Message). This is usually transient (rate limit, network), but if it persists check corporate firewall / proxy settings." `
+                       -Command "Download the latest release manually from https://github.com/$($Entry.repo)/releases, extract the binary '$($Entry.binary)' from the platform-appropriate asset, and place it on PATH."
+        return
+    }
+
+    # Subsequent CASES B, D, E, F, G, H added in later tasks per the plan.
+    Write-Info "  [TODO]   $($Entry.name) - Install-GitHubReleaseTool body pending (Tasks 4-6)"
 }
 
 function Install-GitCloneTool {
