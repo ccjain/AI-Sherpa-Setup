@@ -101,6 +101,24 @@ show_skipped_steps_report() {
 
 check_command() { command -v "$1" &>/dev/null; }
 
+# Returns a platform-arch key like "windows-x64", "linux-arm64", "macos-arm64".
+# Used by install_github_release_tool to look up the right asset in plugins.json.
+platform_arch_key() {
+  local os arch
+  case "$(uname -s 2>/dev/null)" in
+    Linux*)   os=linux ;;
+    Darwin*)  os=macos ;;
+    MINGW*|MSYS*|CYGWIN*) os=windows ;;
+    *)        os=linux ;;
+  esac
+  case "$(uname -m 2>/dev/null)" in
+    x86_64|amd64)        arch=x64 ;;
+    aarch64|arm64)       arch=arm64 ;;
+    *)                   arch=x64 ;;
+  esac
+  echo "${os}-${arch}"
+}
+
 is_wsl() {
   [[ -n "${WSL_DISTRO_NAME:-}" ]] && return 0
   [[ -f /proc/version ]] && grep -qiE 'microsoft|wsl' /proc/version && return 0

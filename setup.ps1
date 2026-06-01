@@ -110,6 +110,27 @@ function Test-CommandExists {
     return ($null -ne (Get-Command $Name -ErrorAction SilentlyContinue))
 }
 
+# Returns a platform-arch key like "windows-x64", "linux-arm64", "macos-arm64".
+# Used by Install-GitHubReleaseTool to look up the right asset in plugins.json.
+# Defaults to "x64" on unrecognized architectures (no current tool ships
+# 32-bit or exotic-arch binaries, so misdetection just falls into the
+# platform-missing error path in the installer). $IsWindows/$IsLinux/$IsMacOS
+# are undefined on PS 5.1; the env-var/default chain handles that.
+function Get-PlatformArchKey {
+    $os = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'windows' }
+          elseif ($IsLinux)   { 'linux' }
+          elseif ($IsMacOS)   { 'macos' }
+          else                { 'windows' }
+    $archRaw = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    $arch = switch -Regex ($archRaw) {
+        'Arm64'   { 'arm64'; break }
+        'Arm'     { 'arm64'; break }
+        'X64'     { 'x64'; break }
+        default   { 'x64' }
+    }
+    return "$os-$arch"
+}
+
 # Minimum versions required by AI Sherpa. Bumping these here is the single
 # source of truth — Install-NodeJS / Install-Git / Install-ClaudeCode all
 # read from this table and enforce it.
@@ -1432,6 +1453,10 @@ function Print-Summary {
 }
 
 # --- Main ---
+# Skip the main flow when this script is dot-sourced as a library (e.g. by
+# scripts/test-setup.ps1). The guard variable is set by the sourcing script
+# before dot-sourcing.
+if (-not $script:SourcedAsLibrary) {
 Show-Logo
 
 if ($Update) {
@@ -1595,3 +1620,4 @@ if ($isUserLevelRun) {
     Show-UserActionsReport
     Print-Summary $domain
 }
+} # end: if (-not $script:SourcedAsLibrary)

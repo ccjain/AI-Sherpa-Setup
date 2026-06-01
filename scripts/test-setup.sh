@@ -235,6 +235,15 @@ EFFECTIVE_HOME="$EFFECTIVE_HOME_BAK"
 HOME="$HOME_BAK"
 rm -rf "$TMP"
 
+# --- Test: platform_arch_key ---
+echo "=== Test: platform_arch_key ==="
+key=$(platform_arch_key)
+if [[ "$key" =~ ^(windows|linux|macos)-(x64|arm64)$ ]]; then
+  ok "platform_arch_key returns <os>-<arch>"
+else
+  fail "platform_arch_key returns <os>-<arch>" "<os>-<arch>" "$key"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
