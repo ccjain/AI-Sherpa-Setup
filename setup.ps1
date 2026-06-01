@@ -842,6 +842,17 @@ function Install-Python {
 function Install-PyPiTool {
     param([string]$Name, [string]$Package, [string]$PostInstall, [switch]$Upgrade)
 
+    # Fast-path: skip if the tool's binary is already on PATH AND we're not in
+    # explicit update mode. Avoids the noisy install/upgrade churn on every
+    # plain setup.bat re-run. `setup.bat --update` flips $Upgrade and
+    # bypasses this skip.
+    if (-not $Upgrade -and (Test-CommandExists $Name)) {
+        $loc = try { (Get-Command $Name -ErrorAction SilentlyContinue).Source } catch { $null }
+        $locSuffix = if ($loc) { " at $loc" } else { '' }
+        Write-Info "  [SKIP]   $Name already installed$locSuffix (run setup.bat --update to upgrade)"
+        return
+    }
+
     # Build the ordered list of installers to attempt. uv tool first (isolated,
     # fast), pipx second (isolated, mature), pip --user last (shares the user's
     # global Python env so dep conflicts are possible — warned about below).
@@ -878,8 +889,15 @@ function Install-PyPiTool {
         $ok = $false
         switch ($installer) {
             'uv' {
-                Write-Info "Installing $Name (uv tool$(if ($Upgrade) { ' upgrade' } else { ' install' }))..."
-                if ($Upgrade) { & uv tool upgrade $Package } else { & uv tool install $Package }
+                # `uv tool install` is idempotent: installs fresh, no-ops if
+                # already at latest, upgrades when a newer version exists.
+                # We use it unconditionally instead of `uv tool upgrade`
+                # because the latter errors with "not installed" when the
+                # tool was previously installed via a different installer
+                # (pip-user, pipx) and only the binary — not uv's tool
+                # registry — knows about it.
+                Write-Info "Installing $Name (uv tool install)..."
+                & uv tool install $Package
                 $ok = ($LASTEXITCODE -eq 0)
                 if ($ok) { Add-WindowsUserPath "$env:USERPROFILE\.local\bin" }
             }
@@ -998,6 +1016,17 @@ function Install-Rust {
 
 function Install-CargoTool {
     param([string]$Name, [string]$Git, [string]$Package, [switch]$Upgrade)
+
+    # Fast-path: skip if tool already on PATH and not explicitly updating.
+    # `cargo install` without --force is a no-op when the tool is at latest,
+    # but still pulls crates.io metadata. The skip avoids even that.
+    if (-not $Upgrade -and (Test-CommandExists $Name)) {
+        $loc = try { (Get-Command $Name -ErrorAction SilentlyContinue).Source } catch { $null }
+        $locSuffix = if ($loc) { " at $loc" } else { '' }
+        Write-Info "  [SKIP]   $Name already installed$locSuffix (run setup.bat --update to upgrade)"
+        return
+    }
+
     if (-not (Test-CommandExists "cargo")) {
         if (-not (Install-Rust)) {
             Add-SkippedStep -Name "$Name (Rust / cargo tool)" `

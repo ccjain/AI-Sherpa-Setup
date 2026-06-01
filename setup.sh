@@ -740,6 +740,18 @@ install_pypi_tool() {
   # args: name | package | postInstall | upgrade(true/false)
   local name="$1" package="$2" post_install="$3" upgrade="${4:-false}"
 
+  # Fast-path: skip if the tool binary is already on PATH AND we're not in
+  # explicit update mode. Avoids the noisy install/upgrade churn (and the
+  # 'uv tool upgrade' "not installed" error when the tool was installed via
+  # a different installer originally) on every plain setup.sh re-run.
+  # `setup.sh --update` flips upgrade=true and bypasses this skip.
+  if [[ "$upgrade" != "true" ]] && check_command "$name"; then
+    local loc
+    loc=$(command -v "$name" 2>/dev/null)
+    log_info "  [SKIP]   $name already installed${loc:+ at $loc} (run setup.sh --update to upgrade)"
+    return
+  fi
+
   if is_windows_claude_hybrid; then
     install_pypi_tool_windows_side "$name" "$package" "$post_install" "$upgrade"
     return
@@ -770,15 +782,17 @@ install_pypi_tool() {
   local last_err=""
 
   if ! $install_ok && check_command uv; then
-    local uv_action="install"
-    [[ "$upgrade" == "true" ]] && uv_action="upgrade"
-    log_info "Installing $name (uv tool $uv_action)..."
-    if uv tool "$uv_action" "$package"; then
+    # 'uv tool install' is idempotent: installs fresh, no-ops at latest,
+    # upgrades when a newer version exists. Use it unconditionally instead
+    # of 'uv tool upgrade' because the latter errors with "not installed"
+    # when the tool was previously installed via a different installer.
+    log_info "Installing $name (uv tool install)..."
+    if uv tool install "$package"; then
       export PATH="$HOME/.local/bin:$PATH"
       install_ok=true
     else
-      last_err="uv tool $uv_action failed"
-      log_warn "$name uv tool $uv_action failed - retrying with next installer..."
+      last_err="uv tool install failed"
+      log_warn "$name uv tool install failed - retrying with next installer..."
     fi
   fi
 
@@ -907,6 +921,17 @@ install_rust() {
 install_cargo_tool() {
   # args: name | git | package | upgrade(true/false)
   local name="$1" git="$2" package="$3" upgrade="${4:-false}"
+
+  # Fast-path: skip if tool binary is already on PATH AND we're not in
+  # explicit update mode. Avoids re-running cargo install (which pulls
+  # crates.io metadata) on every plain setup.sh re-run.
+  if [[ "$upgrade" != "true" ]] && check_command "$name"; then
+    local loc
+    loc=$(command -v "$name" 2>/dev/null)
+    log_info "  [SKIP]   $name already installed${loc:+ at $loc} (run setup.sh --update to upgrade)"
+    return
+  fi
+
   if ! check_command cargo; then
     if ! install_rust; then
       add_skipped_step "$name (Rust / cargo tool)" "Rust toolchain not installed" \
