@@ -244,6 +244,37 @@ else
   fail "platform_arch_key returns <os>-<arch>" "<os>-<arch>" "$key"
 fi
 
+# --- Test: install_github_release_tool skip-if-installed ---
+echo "=== Test: install_github_release_tool skip-if-installed ==="
+# Override check_command so "alreadyinstalledtool" looks installed
+check_command() {
+  [[ "$1" == "alreadyinstalledtool" ]] && return 0 || return 1
+}
+# Capture log output
+captured_info=()
+log_info() { captured_info+=("$*"); }
+
+# Disable set -e for the call; install_github_release_tool may have benign
+# non-zero exits internally (e.g. `command -v` for a fake tool name)
+set +e
+fake_entry='{"name":"alreadyinstalledtool","repo":"fake/repo","asset":{"linux-x64":"fake.tar.gz"},"binary":"alreadyinstalledtool","destination":"/tmp/test-dest"}'
+install_github_release_tool "$fake_entry" "false"
+set -e
+
+found=false
+for line in "${captured_info[@]}"; do
+  if [[ "$line" == *"[SKIP]"*"alreadyinstalledtool already installed"* ]]; then
+    found=true
+    break
+  fi
+done
+if $found; then ok "install_github_release_tool logs SKIP when already installed"
+else fail "install_github_release_tool logs SKIP" "[SKIP] line in output" "no SKIP line"
+fi
+
+# Restore originals
+unset -f check_command log_info
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

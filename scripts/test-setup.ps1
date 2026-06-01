@@ -38,6 +38,47 @@ Write-Host "=== Test: Get-PlatformArchKey ==="
 $key = Get-PlatformArchKey
 Assert-Match "Get-PlatformArchKey returns <os>-<arch>" '^(windows|linux|macos)-(x64|arm64)$' $key
 
+# ----- Test: Install-GitHubReleaseTool skip-if-installed -----
+Write-Host "=== Test: Install-GitHubReleaseTool skip-if-installed ==="
+
+# Override Test-CommandExists so "alreadyinstalledtool" looks installed.
+function Test-CommandExists {
+    param([string]$Cmd)
+    return ($Cmd -eq 'alreadyinstalledtool')
+}
+
+# Override Get-Command (returns an object with .Source for the skip log line)
+function Get-Command {
+    param([string]$Cmd, [string]$ErrorAction)
+    if ($Cmd -eq 'alreadyinstalledtool') {
+        return [pscustomobject]@{ Source = 'C:\fake\path\alreadyinstalledtool.exe' }
+    }
+    return $null
+}
+
+# Capture Write-Info output by temporarily overriding it
+$script:CapturedInfo = @()
+function Write-Info {
+    param([string]$msg)
+    $script:CapturedInfo += $msg
+}
+
+# Call the function with a fake entry
+$entry = [pscustomobject]@{
+    name = 'alreadyinstalledtool'
+    repo = 'fake/repo'
+    asset = @{ 'windows-x64' = 'fake.zip' }
+    binary = 'alreadyinstalledtool'
+    destination = "$env:TEMP\test-dest"
+}
+Install-GitHubReleaseTool -Entry $entry
+
+$found = $false
+foreach ($line in $script:CapturedInfo) {
+    if ($line -match '\[SKIP\]\s+alreadyinstalledtool already installed') { $found = $true; break }
+}
+Assert-True "Install-GitHubReleaseTool logs SKIP when already installed" $found
+
 # ----- Summary -----
 Write-Host ""
 Write-Host "Total: $($script:PASS) PASS / $($script:FAIL) FAIL"

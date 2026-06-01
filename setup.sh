@@ -971,6 +971,29 @@ install_cargo_tool() {
   log_info "$name ready."
 }
 
+# Install a tool by downloading its pre-built binary from a GitHub release.
+# Args: <entry_json> <upgrade_bool>
+# Required Entry fields (from plugins.json, parsed via node -e):
+#   - name        : binary name
+#   - repo        : "<owner>/<name>"
+#   - asset       : object mapping platform-arch -> asset filename
+#   - binary      : binary name to look for inside the extracted archive
+#   - destination : install dir (~/.local/bin etc.)
+install_github_release_tool() {
+  local entry_json="$1" upgrade="${2:-false}"
+  local name; name=$(echo "$entry_json" | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.name||'')})")
+
+  # CASE A: skip if already installed and not forcing an upgrade.
+  if [[ "$upgrade" != "true" ]] && check_command "$name"; then
+    local loc; loc=$(command -v "$name" 2>/dev/null)
+    log_info "  [SKIP]   $name already installed${loc:+ at $loc} (run setup.sh --update to upgrade)"
+    return 0
+  fi
+
+  # CASES B-H added in later tasks per the plan.
+  log_info "  [TODO]   $name - install_github_release_tool body pending (Tasks 3-6)"
+}
+
 install_git_clone_tool() {
   # args: name | repo | destination | postInstall
   local name="$1" repo="$2" destination="$3" post_install="$4"
