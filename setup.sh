@@ -1166,20 +1166,22 @@ process.stdin.on('end',()=>{
       e.git||'',
       e.repo||'',
       e.destination||'',
-      e.postInstall||''
+      e.postInstall||'',
+      JSON.stringify(e)
     ].join('\t')+'\n');
   });
 });
 " < "$config_file")
   [[ -z "$entries" ]] && return 0
 
-  while IFS=$'\t' read -r source name package git repo destination post_install; do
+  while IFS=$'\t' read -r source name package git repo destination post_install entry_json; do
     [[ -z "$source" ]] && continue
     case "$source" in
-      pypi)      install_pypi_tool "$name" "$package" "$post_install" "$upgrade" ;;
-      cargo)     install_cargo_tool "$name" "$git" "$package" "$upgrade" ;;
-      git-clone) install_git_clone_tool "$name" "$repo" "$destination" "$post_install" ;;
-      *)         log_warn "Unknown tool source '$source' for $name; skipping." ;;
+      pypi)           install_pypi_tool "$name" "$package" "$post_install" "$upgrade" ;;
+      cargo)          install_cargo_tool "$name" "$git" "$package" "$upgrade" ;;
+      git-clone)      install_git_clone_tool "$name" "$repo" "$destination" "$post_install" ;;
+      github-release) install_github_release_tool "$entry_json" "$upgrade" ;;
+      *)              log_warn "Unknown tool source '$source' for $name; skipping." ;;
     esac
   done <<< "$entries"
 }

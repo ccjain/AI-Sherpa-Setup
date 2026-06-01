@@ -1327,10 +1327,11 @@ function Install-Tools {
 
     foreach ($t in $entries) {
         switch ($t.source) {
-            'pypi'      { Install-PyPiTool      -Name $t.name -Package $t.package -PostInstall $t.postInstall -Upgrade:$Upgrade }
-            'cargo'     { Install-CargoTool     -Name $t.name -Git $t.git -Package $t.package -Upgrade:$Upgrade }
-            'git-clone' { Install-GitCloneTool  -Name $t.name -Repo $t.repo -Destination $t.destination -PostInstall $t.postInstall }
-            default     { Write-Warn "Unknown tool source '$($t.source)' for $($t.name); skipping." }
+            'pypi'           { Install-PyPiTool           -Name $t.name -Package $t.package -PostInstall $t.postInstall -Upgrade:$Upgrade }
+            'cargo'          { Install-CargoTool          -Name $t.name -Git $t.git -Package $t.package -Upgrade:$Upgrade }
+            'git-clone'      { Install-GitCloneTool       -Name $t.name -Repo $t.repo -Destination $t.destination -PostInstall $t.postInstall }
+            'github-release' { Install-GitHubReleaseTool  -Entry $t -Upgrade:$Upgrade }
+            default          { Write-Warn "Unknown tool source '$($t.source)' for $($t.name); skipping." }
         }
     }
 }
