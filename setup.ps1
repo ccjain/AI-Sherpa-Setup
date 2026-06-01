@@ -1130,8 +1130,30 @@ function Install-GitHubReleaseTool {
         return
     }
 
-    # Subsequent CASES B, D, E, F, G, H added in later tasks per the plan.
-    Write-Info "  [TODO]   $($Entry.name) - Install-GitHubReleaseTool body pending (Tasks 4-6)"
+    # CASE B: no asset declared for this platform.
+    $platformKey = Get-PlatformArchKey
+    $assetName = $Entry.asset.$platformKey
+    if (-not $assetName) {
+        Write-Action "$($Entry.name): no pre-built asset declared for platform '$platformKey'."
+        Add-UserAction -Title "Manually install $($Entry.name) for $platformKey" `
+                       -Why "$($Entry.repo) doesn't ship a binary for $platformKey via this plugins.json entry. You can build from source, use a package manager, or check the repo's README for platform-specific instructions." `
+                       -Command "Build from source: cargo install --git https://github.com/$($Entry.repo)   (requires Rust + native build tools on $platformKey)"
+        return
+    }
+
+    # CASE D: declared asset name not in the latest release.
+    $asset = $manifest.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+    if (-not $asset) {
+        $availableNames = ($manifest.assets | ForEach-Object { $_.name }) -join ', '
+        Write-Action "$($Entry.name): expected asset '$assetName' not found in latest release of $($Entry.repo)."
+        Add-UserAction -Title "Update $($Entry.name) asset name in plugins.json" `
+                       -Why "plugins.json declares asset '$assetName' for $platformKey, but the latest release of $($Entry.repo) doesn't have that file. Upstream likely renamed it. Available assets in this release: $availableNames" `
+                       -Command "Edit plugins.json tools.global[] entry for '$($Entry.name)'. Change asset.$platformKey to one of the names listed above, then re-run setup."
+        return
+    }
+
+    # Subsequent CASES E, F, G, H added in later tasks per the plan.
+    Write-Info "  [TODO]   $($Entry.name) - download+extract pending (Tasks 5-6)"
 }
 
 function Install-GitCloneTool {

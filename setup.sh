@@ -1010,8 +1010,43 @@ process.stdout.write([j.name||'',j.repo||'',j.binary||'',j.destination||''].join
     return 0
   fi
 
-  # Subsequent CASES B, D, E, F, G, H added in later tasks per the plan.
-  log_info "  [TODO]   $name - install_github_release_tool body pending (Tasks 4-6)"
+  # Parse platform key and asset map from the entry
+  local platform_key; platform_key=$(platform_arch_key)
+  local asset_name; asset_name=$(echo "$entry_json" | node -e "
+let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const j=JSON.parse(s);
+const a=(j.asset||{})['$platform_key']||'';process.stdout.write(a)})")
+
+  # CASE B: no asset declared for this platform.
+  if [[ -z "$asset_name" ]]; then
+    log_action "$name: no pre-built asset declared for platform '$platform_key'."
+    add_user_action "Manually install $name for $platform_key" \
+      "$repo doesn't ship a binary for $platform_key via this plugins.json entry. You can build from source, use a package manager, or check the repo's README for platform-specific instructions." \
+      "Build from source: cargo install --git https://github.com/$repo   (requires Rust + native build tools on $platform_key)"
+    return 0
+  fi
+
+  # CASE D: declared asset name not in the latest release.
+  local asset_url; asset_url=$(echo "$manifest" | node -e "
+let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{
+  try{const j=JSON.parse(s);
+    const found=(j.assets||[]).find(a=>a.name==='$asset_name');
+    process.stdout.write(found?found.browser_download_url:'')
+  }catch(e){}
+})")
+  if [[ -z "$asset_url" ]]; then
+    local available; available=$(echo "$manifest" | node -e "
+let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{
+  try{const j=JSON.parse(s);process.stdout.write((j.assets||[]).map(a=>a.name).join(', '))}catch(e){}
+})")
+    log_action "$name: expected asset '$asset_name' not found in latest release of $repo."
+    add_user_action "Update $name asset name in plugins.json" \
+      "plugins.json declares asset '$asset_name' for $platform_key, but the latest release of $repo doesn't have that file. Upstream likely renamed it. Available assets in this release: $available" \
+      "Edit plugins.json tools.global[] entry for '$name'. Change asset.$platform_key to one of the names listed above, then re-run setup."
+    return 0
+  fi
+
+  # Subsequent CASES E, F, G, H added in later tasks per the plan.
+  log_info "  [TODO]   $name - download+extract pending (Tasks 5-6) (asset: $asset_name)"
 }
 
 install_git_clone_tool() {

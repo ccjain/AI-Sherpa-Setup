@@ -304,7 +304,62 @@ else
   fail "CASE C: API failure adds a user_action" "non-empty captured_user_actions" "empty"
 fi
 
-unset -f check_command curl log_action add_user_action
+unset -f check_command curl log_action add_user_action log_info
+
+# --- Test: install_github_release_tool platform missing (CASE B) ---
+echo "=== Test: install_github_release_tool platform missing (CASE B) ==="
+check_command() { return 1; }
+# curl returns a manifest with an asset that doesn't match our platform
+curl() {
+  cat <<'JSON'
+{"assets":[{"name":"something-else.tar.gz","browser_download_url":"https://example.invalid/x"}]}
+JSON
+  return 0
+}
+captured_action=()
+captured_user_actions=()
+log_info() { :; }
+log_action() { captured_action+=("$*"); }
+add_user_action() { captured_user_actions+=("title=$1; why=$2; cmd=$3"); }
+
+set +e
+fake_entry_b='{"name":"rtk","repo":"rtk-ai/rtk","asset":{"freebsd-x64":"fake.zip"},"binary":"rtk","destination":"/tmp/test-dest"}'
+install_github_release_tool "$fake_entry_b" "false"
+set -e
+
+if [[ ${#captured_action[@]} -gt 0 ]]; then ok "CASE B emits log_action"
+else fail "CASE B emits log_action" "non-empty" "empty"
+fi
+if [[ ${#captured_user_actions[@]} -gt 0 ]]; then ok "CASE B adds user_action"
+else fail "CASE B adds user_action" "non-empty" "empty"
+fi
+
+# --- Test: install_github_release_tool asset rename (CASE D) ---
+echo "=== Test: install_github_release_tool asset rename (CASE D) ==="
+captured_action=()
+captured_user_actions=()
+
+current_key=$(platform_arch_key)
+fake_entry_d="{\"name\":\"rtk\",\"repo\":\"rtk-ai/rtk\",\"asset\":{\"${current_key}\":\"expected-name-not-in-manifest.zip\"},\"binary\":\"rtk\",\"destination\":\"/tmp/test-dest\"}"
+set +e
+install_github_release_tool "$fake_entry_d" "false"
+set -e
+
+if [[ ${#captured_action[@]} -gt 0 ]]; then ok "CASE D emits log_action"
+else fail "CASE D emits log_action" "non-empty" "empty"
+fi
+if [[ ${#captured_user_actions[@]} -gt 0 ]]; then
+  ok "CASE D adds user_action"
+  if [[ "${captured_user_actions[0]}" == *"something-else.tar.gz"* ]]; then
+    ok "CASE D user_action lists actual asset names"
+  else
+    fail "CASE D user_action lists actual asset names" "something-else.tar.gz in why" "${captured_user_actions[0]}"
+  fi
+else
+  fail "CASE D adds user_action" "non-empty" "empty"
+fi
+
+unset -f check_command curl log_action add_user_action log_info
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

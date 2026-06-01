@@ -117,6 +117,62 @@ if ($script:CapturedUserActions.Count -gt 0) {
     Assert-Match "CASE C: UserAction Command mentions releases page" 'releases' $script:CapturedUserActions[0].Command
 }
 
+# ----- Test: Install-GitHubReleaseTool ACTION REQUIRED on missing platform asset -----
+Write-Host "=== Test: Install-GitHubReleaseTool platform missing (CASE B) ==="
+
+function Test-CommandExists { return $false }
+
+# Return a successful manifest with one asset (but for a different platform)
+function Invoke-RestMethod {
+    return [pscustomobject]@{
+        assets = @(
+            [pscustomobject]@{ name = 'something-else.zip'; browser_download_url = 'https://example.invalid/x' }
+        )
+    }
+}
+
+$script:CapturedAction = @()
+$script:CapturedUserActions = @()
+function Write-Action { param([string]$msg) $script:CapturedAction += $msg }
+function Add-UserAction {
+    param([string]$Title, [string]$Why, [string]$Command)
+    $script:CapturedUserActions += [pscustomobject]@{ Title = $Title; Why = $Why; Command = $Command }
+}
+
+$entry = [pscustomobject]@{
+    name = 'rtk'
+    repo = 'rtk-ai/rtk'
+    asset = @{ 'freebsd-x64' = 'fake.zip' }   # not the current platform
+    binary = 'rtk'
+    destination = "$env:TEMP\test-dest"
+}
+Install-GitHubReleaseTool -Entry $entry
+
+Assert-True "CASE B: no asset for platform -> Write-Action emitted" ($script:CapturedAction.Count -gt 0)
+Assert-True "CASE B: no asset for platform -> Add-UserAction collected" ($script:CapturedUserActions.Count -gt 0)
+
+
+# ----- Test: Install-GitHubReleaseTool ACTION REQUIRED on asset rename (CASE D) -----
+Write-Host "=== Test: Install-GitHubReleaseTool asset rename (CASE D) ==="
+
+$script:CapturedAction = @()
+$script:CapturedUserActions = @()
+
+$entry2 = [pscustomobject]@{
+    name = 'rtk'
+    repo = 'rtk-ai/rtk'
+    asset = @{ "$(Get-PlatformArchKey)" = 'expected-name-not-in-manifest.zip' }
+    binary = 'rtk'
+    destination = "$env:TEMP\test-dest"
+}
+Install-GitHubReleaseTool -Entry $entry2
+
+Assert-True "CASE D: asset name mismatch -> Write-Action emitted" ($script:CapturedAction.Count -gt 0)
+Assert-True "CASE D: asset name mismatch -> Add-UserAction collected" ($script:CapturedUserActions.Count -gt 0)
+if ($script:CapturedUserActions.Count -gt 0) {
+    Assert-Match "CASE D: UserAction Why lists actual asset names" 'something-else\.zip' $script:CapturedUserActions[0].Why
+}
+
 # ----- Summary -----
 Write-Host ""
 Write-Host "Total: $($script:PASS) PASS / $($script:FAIL) FAIL"
