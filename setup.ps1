@@ -330,27 +330,38 @@ function Read-PluginConfig {
     return @()
 }
 
-# Check installed_plugins.json to see if a plugin is currently enabled.
-# Returns $true ONLY if an explicit marker says "enabled". Returns $false on
-# any uncertainty so Enable-Plugin actually calls `claude plugin enable`.
+# Check whether a plugin is currently enabled.
 #
-# History: this used to optimistically return $true when no marker was
-# present, on the assumption that `claude plugin install` enables by default
-# and `claude plugin disable` would write an explicit "disabled" marker.
-# That assumption is WRONG for the v2 schema currently shipped by Claude
-# Code: install entries carry only {scope, installPath, version,
-# installedAt, lastUpdated, ...} with no enabled/disabled/status field, AND
-# `claude plugin install` does NOT auto-enable in recent CLI versions. The
-# result was that every installed plugin appeared "already active" to setup,
-# the actual `claude plugin enable` call was skipped, and every plugin
-# shipped disabled (seen as `Status: × disabled` across `claude plugin list`).
+# Truth source (in priority order):
+#   1. ~/.claude/settings.json#enabledPlugins[<spec>] — the actual key
+#      `claude plugin list` reads to decide ✓ enabled vs × disabled. Per
+#      upstream issue https://github.com/anthropics/claude-code/issues/20661,
+#      `claude plugin install` and `claude plugin enable` do NOT reliably
+#      populate this key — setup has to write it itself via
+#      Set-AllInstalledPluginsEnabled.
+#   2. installed_plugins.json with an explicit enabled/disabled/status
+#      marker. Kept as forward-compat for any future CLI schema; current
+#      v2 schema has none of these fields, so this branch is dead today
+#      but cheap to leave in.
 #
-# The fix: treat absence-of-marker as "don't know -> let Enable-Plugin try".
-# Enable-Plugin's stderr fallback already pattern-matches 'already enabled'
-# and treats it as success, so the extra CLI call is harmless when the
-# plugin happens to already be on.
+# Returns $false on any uncertainty so Enable-Plugin falls through to
+# either the CLI call (harmless no-op given the upstream bug) or the
+# bulk-enable-via-settings.json pass at end of install/update.
 function Test-PluginEnabled {
     param([string]$Spec)
+
+    # 1. settings.json#enabledPlugins — authoritative for v2 CLI.
+    $settingsFile = "$env:USERPROFILE\.claude\settings.json"
+    if (Test-Path $settingsFile) {
+        try {
+            $s = Get-Content $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($s.enabledPlugins -and $null -ne $s.enabledPlugins.$Spec) {
+                return [bool]$s.enabledPlugins.$Spec
+            }
+        } catch {}
+    }
+
+    # 2. installed_plugins.json explicit markers — forward-compat only.
     $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
     if (-not (Test-Path $installedFile)) { return $false }
     try {
@@ -358,14 +369,68 @@ function Test-PluginEnabled {
         if (-not $j.plugins) { return $false }
         $entry = $j.plugins.$Spec
         if (-not $entry) { return $false }
-        # Schema across CLI versions varies. Only trust EXPLICIT markers;
-        # any other shape (including the current v2 schema which has none
-        # of these fields) must fall through to "let Enable-Plugin try".
         if ($null -ne $entry.enabled)  { return [bool]$entry.enabled }
         if ($null -ne $entry.disabled) { return -not [bool]$entry.disabled }
         if ($null -ne $entry.status)   { return ($entry.status -eq 'enabled') }
         return $false
     } catch { return $false }
+}
+
+# Workaround for https://github.com/anthropics/claude-code/issues/20661 and
+# related (#9641, #14815): `claude plugin install` writes the spec into
+# installed_plugins.json but does NOT add `"<spec>": true` to
+# ~/.claude/settings.json#enabledPlugins, and `claude plugin enable` reports
+# exit 0 without actually persisting either. `claude plugin list` and the
+# Claude Code UI's Installed tab both read from settings.json#enabledPlugins,
+# so every installed plugin shows up as `Status: × disabled` and the
+# Installed tab stays empty even after a successful AI Sherpa install pass.
+#
+# This sweeps every plugin from installed_plugins.json and writes
+# `"<spec>": true` into settings.json#enabledPlugins, preserving every
+# other key in settings.json (permissions, hooks, etc.). Call AFTER
+# Write-GlobalSettings — Write-GlobalSettings overwrites settings.json from
+# the template and would clobber any enabledPlugins block written before it.
+function Set-AllInstalledPluginsEnabled {
+    $settingsFile  = "$env:USERPROFILE\.claude\settings.json"
+    $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
+
+    if (-not (Test-Path $installedFile)) {
+        Write-Warn "installed_plugins.json not found at $installedFile - skipping enable-in-settings pass."
+        return
+    }
+    try {
+        $installed = Get-Content $installedFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch {
+        Write-Warn "Could not parse installed_plugins.json: $($_.Exception.Message)"
+        return
+    }
+    if (-not $installed.plugins) {
+        Write-Info "installed_plugins.json has no plugins block - nothing to enable."
+        return
+    }
+
+    $settings = if (Test-Path $settingsFile) {
+        try { Get-Content $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json }
+        catch { [PSCustomObject]@{} }
+    } else { [PSCustomObject]@{} }
+
+    if (-not $settings.enabledPlugins) {
+        $settings | Add-Member -NotePropertyName enabledPlugins `
+                               -NotePropertyValue ([PSCustomObject]@{}) -Force
+    }
+
+    $count = 0
+    foreach ($spec in @($installed.plugins.PSObject.Properties.Name)) {
+        $settings.enabledPlugins | Add-Member -NotePropertyName $spec `
+                                              -NotePropertyValue $true -Force
+        $count++
+    }
+
+    # Depth 10 because settings.json#hooks contains nested arrays-of-objects-
+    # of-arrays-of-objects (matcher -> hooks -> command). Default depth (2)
+    # would truncate the hooks block to "System.Object[]" garbage on round-trip.
+    $settings | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsFile -Encoding UTF8
+    Write-Info "Wrote enabledPlugins for $count plugins into settings.json (workaround for claude-code#20661)."
 }
 
 # Ensure a plugin is enabled after install / update. The common case is
@@ -1512,6 +1577,9 @@ function Invoke-Update {
     Install-Tools -Domain $savedDomain -Upgrade
 
     Write-GlobalSettings
+    # Same ordering as the main install flow — must run AFTER
+    # Write-GlobalSettings so the template overwrite doesn't clobber it.
+    Set-AllInstalledPluginsEnabled
     Write-Info "Update complete. Plugins, skills, and tools refreshed to latest$(if ($savedDomain) { " for domain '$savedDomain'" })."
     Write-Info "Project CLAUDE.md was NOT modified."
 }
@@ -1827,6 +1895,9 @@ if ($pluginsCfg -and $pluginsCfg.domains) {
     Install-Skills -Domain $domain
 }
 Write-GlobalSettings
+# Must run AFTER Write-GlobalSettings (which overwrites settings.json from the
+# template). See Set-AllInstalledPluginsEnabled docstring + claude-code#20661.
+Set-AllInstalledPluginsEnabled
 
 # Embedded-specific: probe for toolchains, flashers, debuggers and record them
 # so Claude can issue concrete build/flash/debug commands instead of generic prose.
