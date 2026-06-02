@@ -507,21 +507,11 @@ function Enable-Plugin {
     }
 }
 
-# Run `claude plugin install <spec>` or `claude plugin update <spec>` with
-# EBUSY-aware retry. Claude CLI's plugin install/update path on Windows
-# creates a `temp_git_<ts>_<rand>` directory, git-clones the new version
-# into it, and tries to remove the temp dir after the swap. The rm
-# regularly hits EBUSY because Windows Defender / Search Indexer / git.exe
-# children still hold file handles on freshly-cloned files for ~100-500ms.
-# It's a transient lock: a 2-second wait and retry almost always succeeds.
-#
-# We retry up to $MaxAttempts times but ONLY when stderr matches the EBUSY
-# + temp_git_ pattern; any other failure mode (network, auth, real conflict)
-# fails fast on the first attempt as before. Stdout passes through so the
-# user sees claude's own "Checking for updates..." / "Already at latest"
-# messages; stderr is captured for retry detection and re-emitted only if
-# all attempts fail, so a successful retry isn't accompanied by a confusing
-# wall of "× Failed..." text.
+# claude plugin install/update with EBUSY-aware retry (Windows file-lock
+# race on temp_git_* cleanup, ~100-500ms, transient — AV/indexer/git.exe
+# children). Retries only when stderr matches EBUSY; other failures fail
+# fast. Stdout passes through; stderr captured for retry detection and
+# re-emitted only on final failure.
 function Invoke-PluginCommand {
     param(
         [Parameter(Mandatory)][ValidateSet('install','update')][string]$Operation,
@@ -535,38 +525,18 @@ function Invoke-PluginCommand {
     $finalStderr = ''
     try {
         for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-            # PS 5.1 native-command call needs two safety belts to coexist with
-            # the script-level $ErrorActionPreference = "Stop":
-            #
-            # 1. Local $ErrorActionPreference = 'Continue'. When claude.exe
-            #    writes to stderr (the EBUSY message), PS 5.1's `2>file`
-            #    redirect still routes the lines through PS's error stream
-            #    and wraps them as NativeCommandError records. Under global
-            #    Stop, that becomes a TERMINATING error and aborts the
-            #    entire script — the retry loop never gets to iterate.
-            #
-            # 2. `| Out-Host` pipes stdout to the terminal but keeps it OUT
-            #    of the function's pipeline output. Without it, every line
-            #    claude.exe prints to stdout (the "Checking for updates..."
-            #    progress text) becomes part of this function's return value
-            #    alongside $finalRc, so callers do `$rc = Invoke-PluginCommand`
-            #    and get [String[], Int32] not Int32 — and `if ($rc -ne 0)`
-            #    evaluates against an array which is never -ne 0 the way
-            #    we want it.
-            $oldEAP = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            try {
-                & claude plugin $Operation $Spec --scope $Scope 2>$tmpErr | Out-Host
-                $finalRc = $LASTEXITCODE
-            } finally {
-                $ErrorActionPreference = $oldEAP
-            }
+            # PS 5.1 belts (see commit 0c8b4ad for full rationale): local EAP
+            # so stderr doesn't terminate under global Stop; Out-Host so
+            # native stdout doesn't pollute the function's return value.
+            $oldEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            try { & claude plugin $Operation $Spec --scope $Scope 2>$tmpErr | Out-Host; $finalRc = $LASTEXITCODE }
+            finally { $ErrorActionPreference = $oldEAP }
             $finalStderr = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue
             if ($finalRc -eq 0) { break }
-            $isEbusy = $finalStderr -and $finalStderr -match 'EBUSY.*temp_git_'
+            $isEbusy = $finalStderr -and $finalStderr -match 'EBUSY'
             if (-not $isEbusy) { break }
             if ($attempt -lt $MaxAttempts) {
-                Write-Warn "  $Spec ${Operation}: Windows EBUSY on temp_git_* (AV/indexer holds file); retry $($attempt + 1)/$MaxAttempts in ${DelaySeconds}s..."
+                Write-Warn "  $Spec ${Operation}: Windows EBUSY (AV/indexer file lock); retry $($attempt + 1)/$MaxAttempts in ${DelaySeconds}s..."
                 Start-Sleep -Seconds $DelaySeconds
                 Clear-Content $tmpErr -ErrorAction SilentlyContinue
             }
@@ -757,12 +727,17 @@ function Register-Marketplaces {
             Write-Info "  [REFRESH] marketplace $name (already registered, refreshing cache)"
         } else {
             Write-Info "  [NEW]     marketplace $name ($repo)"
-            # Capture exit+stderr — silent fails (network, transient CLI, GitHub
-            # rate-limit) now surface here, not 200 lines later as "not found".
-            $tmpErr = [System.IO.Path]::GetTempFileName()
-            $oldEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-            try { $null = & claude plugin marketplace add $repo 2>$tmpErr; $rc = $LASTEXITCODE } finally { $ErrorActionPreference = $oldEAP }
-            $stderr = (Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue); Remove-Item $tmpErr -ErrorAction SilentlyContinue; $global:LASTEXITCODE = 0
+            # Capture exit+stderr + EBUSY-retry (Windows AV/indexer file lock
+            # on marketplaces\<name>\ cleanup, same race as plugin install).
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+                $tmpErr = [System.IO.Path]::GetTempFileName()
+                $oldEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+                try { $null = & claude plugin marketplace add $repo 2>$tmpErr; $rc = $LASTEXITCODE } finally { $ErrorActionPreference = $oldEAP }
+                $stderr = (Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue); Remove-Item $tmpErr -ErrorAction SilentlyContinue; $global:LASTEXITCODE = 0
+                if ($rc -eq 0 -or $stderr -notmatch 'EBUSY' -or $attempt -eq 3) { break }
+                Write-Warn "  marketplace add hit EBUSY for $name; retry $($attempt + 1)/3 in 2s..."
+                Start-Sleep -Seconds 2
+            }
             if ($rc -ne 0 -and $stderr -notmatch '(?i)already (added|registered|exists)') {
                 $errSummary = ($stderr -replace '\s+',' ').Trim()
                 Write-Action "marketplace add failed: $name (exit $rc) - $errSummary"
