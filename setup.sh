@@ -617,6 +617,43 @@ install_git_via_pkg_manager() {
   return 1
 }
 
+# Bun is a hard runtime prerequisite for the claude-mem plugin (it ships
+# hooks that pipe through `bun`). When Bun is missing every claude-mem
+# hook fails with EPIPE printed as "printf: write error: Permission
+# denied" on SessionStart / UserPromptSubmit / PostToolUse / Stop — the
+# hooks are non-blocking so Claude Code still works, but the user sees
+# 5+ red errors on every prompt. We auto-install rather than ACTION
+# REQUIRED to keep setup truly one-step. No min version: claude-mem
+# pins what it needs internally.
+install_bun() {
+  if check_command bun; then
+    log_info "Bun $(bun --version 2>/dev/null) already installed (required by claude-mem)."
+    return 0
+  fi
+  log_info "Bun not found. Installing (required by claude-mem hooks)..."
+  # Official Bun installer — same one bun.sh shows in its docs. Runs as
+  # the current user; drops the binary into ~/.bun/bin/. --fail aborts
+  # on HTTP error codes so we never pipe an HTML error page into bash.
+  if curl --fail -fsSL https://bun.sh/install | bash; then
+    # Installer patches ~/.bashrc / ~/.zshrc but the current shell's
+    # PATH was captured before that — export in-process so the rest of
+    # setup (and any verification call below) can find bun.
+    if [[ -x "$HOME/.bun/bin/bun" ]]; then
+      export BUN_INSTALL="$HOME/.bun"
+      export PATH="$BUN_INSTALL/bin:$PATH"
+      log_info "Bun $(bun --version 2>/dev/null) installed."
+      return 0
+    fi
+    log_warn "Bun installer ran but binary not found at ~/.bun/bin/bun."
+  else
+    log_warn "Bun auto-install failed (curl | bash exited non-zero)."
+  fi
+  add_user_action "Install Bun manually" \
+    "claude-mem hooks pipe through bun; without it every session prints 5+ non-blocking hook errors." \
+    "curl -fsSL https://bun.sh/install | bash"
+  return 1
+}
+
 install_python() {
   log_info "Python pip not found. Attempting to install Python 3..."
   local rc=1
@@ -1565,6 +1602,8 @@ main() {
   else
     log_info "Claude Code found."
   fi
+
+  install_bun
 
   # --- Domain selection ---
   echo ""

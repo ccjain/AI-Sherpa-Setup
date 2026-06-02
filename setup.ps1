@@ -278,6 +278,51 @@ function Install-Git {
     Write-Info "Git $current OK (>= $min)."
 }
 
+# Bun is a hard runtime prerequisite for the claude-mem plugin (it ships
+# hooks that pipe through `bun`). When Bun is missing every claude-mem
+# hook fails with EPIPE printed as "printf: write error: Permission
+# denied" on SessionStart / UserPromptSubmit / PostToolUse / Stop — the
+# hooks are non-blocking so Claude Code still works, but the user sees
+# 5+ red errors on every prompt. We auto-install rather than ACTION
+# REQUIRED to keep setup truly one-step. No min version: claude-mem
+# pins what it needs internally.
+function Install-Bun {
+    if (Get-Command bun -ErrorAction SilentlyContinue) {
+        $v = (& bun --version 2>$null) -join ''
+        Write-Info "Bun $v already installed (required by claude-mem)."
+        return
+    }
+    Write-Info "Bun not found. Installing (required by claude-mem hooks)..."
+    try {
+        # Official Windows installer — same one bun.sh shows in its docs.
+        # Runs as the current user, drops bun.exe into ~/.bun/bin/.
+        Invoke-RestMethod -Uri 'https://bun.sh/install.ps1' -UseBasicParsing | Invoke-Expression
+    } catch {
+        Write-Warn "Bun auto-install failed: $($_.Exception.Message)"
+        Add-UserAction -Title "Install Bun manually" `
+                       -Why "claude-mem hooks pipe through bun; without it every session prints 5+ non-blocking hook errors." `
+                       -Command 'powershell -c "irm bun.sh/install.ps1 | iex"'
+        return
+    }
+    # Bun installer patches the user PATH in the registry but the current
+    # shell's $env:Path snapshot was taken before that — add ~/.bun/bin
+    # in-process so downstream steps (and any verification call below)
+    # can find it.
+    $bunBin = Join-Path $env:USERPROFILE '.bun\bin'
+    if (Test-Path (Join-Path $bunBin 'bun.exe')) {
+        if ($env:Path -notmatch [regex]::Escape($bunBin)) {
+            $env:Path = "$bunBin;$env:Path"
+        }
+        $v = (& bun --version 2>$null) -join ''
+        Write-Info "Bun $v installed."
+    } else {
+        Write-Warn "Bun installer ran but bun.exe wasn't found at $bunBin."
+        Add-UserAction -Title "Install Bun manually" `
+                       -Why "Auto-install reported success but the binary isn't in the expected location; claude-mem hooks will fail until Bun is on PATH." `
+                       -Command 'powershell -c "irm bun.sh/install.ps1 | iex"'
+    }
+}
+
 function Install-ClaudeCode {
     $min = $script:MinVersions.claude
     $current = Get-ToolVersion 'claude'
@@ -1833,6 +1878,7 @@ Write-Info "Checking prerequisites..."
 Install-NodeJS
 Install-Git
 Install-ClaudeCode
+Install-Bun
 
 # Domain selection — DISABLED.
 #
