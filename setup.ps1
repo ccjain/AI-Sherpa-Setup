@@ -390,8 +390,20 @@ function Enable-Plugin {
     }
     $tmpErr = [System.IO.Path]::GetTempFileName()
     try {
-        $null = & claude plugin enable $Spec 2>$tmpErr
-        $rc = $LASTEXITCODE
+        # Local $ErrorActionPreference = 'Continue' so that when claude.exe
+        # writes "× Failed... already enabled" to stderr, PS 5.1's `2>file`
+        # redirect doesn't escalate the line through NativeCommandError +
+        # the script-level Stop into a terminating error — the existing
+        # "already enabled" stderr pattern-match below needs to actually
+        # run instead of the script crashing first.
+        $oldEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $null = & claude plugin enable $Spec 2>$tmpErr
+            $rc = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $oldEAP
+        }
         $stderr = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue
     } finally {
         Remove-Item $tmpErr -ErrorAction SilentlyContinue
@@ -566,8 +578,21 @@ function Invoke-MarketplaceUpdate {
     )
     $tmpErr = [System.IO.Path]::GetTempFileName()
     try {
-        $null = & claude plugin marketplace update $Name 2>$tmpErr
-        $rc = $LASTEXITCODE
+        # See Enable-Plugin / Invoke-PluginCommand for the rationale on the
+        # local $ErrorActionPreference = 'Continue' belt: without it, any
+        # stderr line from claude.exe (auth failure, network error, etc.)
+        # gets wrapped as NativeCommandError and aborts the script under
+        # the global Stop preference, bypassing the auth-pattern fallback
+        # below that's supposed to convert "not logged in" into a clear
+        # ACTION REQUIRED.
+        $oldEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $null = & claude plugin marketplace update $Name 2>$tmpErr
+            $rc = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $oldEAP
+        }
         $stderr = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue
     } finally {
         Remove-Item $tmpErr -ErrorAction SilentlyContinue
