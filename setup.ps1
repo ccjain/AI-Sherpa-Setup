@@ -409,6 +409,28 @@ function Set-AllInstalledPluginsEnabled {
         return
     }
 
+    # Build the set of "<name>@<marketplace>" specs that should be DISABLED
+    # because their domain is listed in plugins.json#disabled_domains. Setup
+    # may have previously installed these plugins (before disabled_domains
+    # was set, or during a prior run); we set them to false here so they
+    # stop loading without uninstalling on disk.
+    $disabledSpecs = @{}
+    try {
+        $cfg = Get-Content "$ScriptDir\plugins.json" -Raw | ConvertFrom-Json
+        $disabledDomains = if ($cfg.disabled_domains) { @($cfg.disabled_domains) } else { @() }
+        if ($cfg.domains -and $disabledDomains.Count -gt 0) {
+            foreach ($d in $disabledDomains) {
+                if ($cfg.domains.$d) {
+                    foreach ($p in @($cfg.domains.$d)) {
+                        if ($p.marketplace -and $p.name) {
+                            $disabledSpecs["$($p.name)@$($p.marketplace)"] = $true
+                        }
+                    }
+                }
+            }
+        }
+    } catch {}
+
     $settings = if (Test-Path $settingsFile) {
         try { Get-Content $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json }
         catch { [PSCustomObject]@{} }
@@ -419,18 +441,24 @@ function Set-AllInstalledPluginsEnabled {
                                -NotePropertyValue ([PSCustomObject]@{}) -Force
     }
 
-    $count = 0
+    $enabledCount = 0
+    $disabledCount = 0
     foreach ($spec in @($installed.plugins.PSObject.Properties.Name)) {
+        $value = if ($disabledSpecs.ContainsKey($spec)) { $false } else { $true }
         $settings.enabledPlugins | Add-Member -NotePropertyName $spec `
-                                              -NotePropertyValue $true -Force
-        $count++
+                                              -NotePropertyValue $value -Force
+        if ($value) { $enabledCount++ } else { $disabledCount++ }
     }
 
     # Depth 10 because settings.json#hooks contains nested arrays-of-objects-
     # of-arrays-of-objects (matcher -> hooks -> command). Default depth (2)
     # would truncate the hooks block to "System.Object[]" garbage on round-trip.
     $settings | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsFile -Encoding UTF8
-    Write-Info "Wrote enabledPlugins for $count plugins into settings.json (workaround for claude-code#20661)."
+    if ($disabledCount -gt 0) {
+        Write-Info "settings.json#enabledPlugins: $enabledCount enabled, $disabledCount disabled (per plugins.json#disabled_domains)."
+    } else {
+        Write-Info "Wrote enabledPlugins for $enabledCount plugins into settings.json (workaround for claude-code#20661)."
+    }
 }
 
 # Ensure a plugin is enabled after install / update. The common case is
@@ -1554,8 +1582,10 @@ function Invoke-Update {
     }
     $pluginsCfg = $null
     try { $pluginsCfg = Get-Content "$ScriptDir\plugins.json" -Raw | ConvertFrom-Json } catch {}
+    $disabledDomains = if ($pluginsCfg.disabled_domains) { @($pluginsCfg.disabled_domains) } else { @() }
     if ($pluginsCfg -and $pluginsCfg.domains) {
         foreach ($d in @($pluginsCfg.domains.PSObject.Properties.Name)) {
+            if ($disabledDomains -contains $d) { Write-Info "  [SKIP] $d (disabled_domains)"; continue }
             $domainPlugins = Read-PluginConfig -Section $d
             foreach ($entry in $domainPlugins) {
                 Write-Info "Updating $($entry.name) ($d)..."
@@ -1885,8 +1915,10 @@ Register-Marketplaces
 Install-CoreSkills
 $pluginsCfg = $null
 try { $pluginsCfg = Get-Content "$ScriptDir\plugins.json" -Raw | ConvertFrom-Json } catch {}
+$disabledDomains = if ($pluginsCfg.disabled_domains) { @($pluginsCfg.disabled_domains) } else { @() }
 if ($pluginsCfg -and $pluginsCfg.domains) {
     foreach ($d in @($pluginsCfg.domains.PSObject.Properties.Name)) {
+        if ($disabledDomains -contains $d) { Write-Info "  [SKIP]   $d (disabled_domains)"; continue }
         Install-DomainSkills $d
         Install-Skills -Domain $d
     }

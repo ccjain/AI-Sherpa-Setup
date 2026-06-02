@@ -1,4 +1,7 @@
 {
+  "_comment_disabled_domains": "Domains listed here are skipped by setup: their plugins are NOT installed, and any previously-installed plugins from these domains are set to false in ~/.claude/settings.json#enabledPlugins (disabled but not uninstalled). To re-enable a domain, remove its name from disabled_domains and re-run setup.bat.",
+  "disabled_domains": ["marketing", "sales", "finance", "service", "procurement"],
+
   "marketplaces": [
     { "repo": "anthropics/claude-plugins-official", "name": "claude-plugins-official"       },
     { "repo": "anthropics/knowledge-work-plugins",  "name": "knowledge-work-plugins"        },
