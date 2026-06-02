@@ -1711,7 +1711,38 @@ Install-NodeJS
 Install-Git
 Install-ClaudeCode
 
-# Domain selection (both paths)
+# Domain selection — DISABLED.
+#
+# Setup now registers every declared marketplace and installs every domain's
+# plugins unconditionally (see Register-Marketplaces / Install-DomainSkills
+# loop below). The SessionStart hook activates the active-domain rules per
+# project, so asking the user to pick a single domain at install time would
+# imply a choice that doesn't actually affect what gets installed.
+#
+# $domain is still used downstream for:
+#   - embedded-toolchain detection (`if ($domain -eq "embedded") { ... }`)
+#   - Write-GlobalClaudeMd $domain  (CLAUDE.md domain rules merge)
+#   - Install-Tools -Domain $domain  (per-domain CLI tools)
+#   - Write-AiSherpaState -Domain $domain  (state.json initial value)
+#   - Test-Installation $domain  (verification + summary)
+#
+# Default policy:
+#   - Re-run: keep the saved domain from .ai-sherpa-state.json (preserves
+#     the user's prior choice, no destructive Invoke-DomainSwitch fires).
+#   - Fresh install: default to "embedded" since that's the first domain
+#     in the list. The actual install pass is domain-agnostic so any
+#     value works for the downstream uses; we just need *something* set.
+#
+# TODO: when the per-session-domain hook fully obsoletes the install-time
+# notion of "the" domain, drop $domain entirely and rewrite the call sites
+# above to read per-project state instead.
+$savedDomain = Get-AiSherpaDomain
+if ($savedDomain) { $domain = $savedDomain } else { $domain = "embedded" }
+$isReinstall = $null -ne $savedDomain
+
+# Original interactive prompt — to restore, remove the surrounding block-
+# comment markers from the next segment.
+<#
 Write-Host ""
 Write-Host "Which domain are you working in?"
 Write-Host "  --- Engineering ---"
@@ -1735,15 +1766,7 @@ if (-not $domainMap.ContainsKey($domainChoice)) {
     exit 1
 }
 $domain = $domainMap[$domainChoice]
-
-# Auto-detect whether this is a fresh install or a re-run. The presence of
-# ~/.claude/.ai-sherpa-state.json (written by Write-AiSherpaState at the end of
-# a successful install) is the signal. On re-run:
-#   - same domain  -> Install-Plugin per-entry chooses update vs install
-#   - new  domain  -> uninstall old-domain plugins first, then install new ones
-# This removes the need to pass --update explicitly for the common case.
-$savedDomain = Get-AiSherpaDomain
-$isReinstall = $null -ne $savedDomain
+#>
 if ($isReinstall) {
     if ($savedDomain -eq $domain) {
         Write-Info "AI Sherpa already installed for domain '$domain'. Re-running:"
