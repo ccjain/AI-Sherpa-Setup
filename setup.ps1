@@ -376,20 +376,11 @@ function Test-PluginEnabled {
     } catch { return $false }
 }
 
-# Workaround for https://github.com/anthropics/claude-code/issues/20661 and
-# related (#9641, #14815): `claude plugin install` writes the spec into
-# installed_plugins.json but does NOT add `"<spec>": true` to
-# ~/.claude/settings.json#enabledPlugins, and `claude plugin enable` reports
-# exit 0 without actually persisting either. `claude plugin list` and the
-# Claude Code UI's Installed tab both read from settings.json#enabledPlugins,
-# so every installed plugin shows up as `Status: × disabled` and the
-# Installed tab stays empty even after a successful AI Sherpa install pass.
-#
-# This sweeps every plugin from installed_plugins.json and writes
-# `"<spec>": true` into settings.json#enabledPlugins, preserving every
-# other key in settings.json (permissions, hooks, etc.). Call AFTER
-# Write-GlobalSettings — Write-GlobalSettings overwrites settings.json from
-# the template and would clobber any enabledPlugins block written before it.
+# Workaround for claude-code#20661 (claude plugin install/enable don't
+# populate settings.json#enabledPlugins, so the UI shows everything as
+# × disabled). Sweep installed_plugins.json -> set each spec to true,
+# or false when its domain is in disabled_domains. MUST run AFTER
+# Write-GlobalSettings — template overwrite would clobber otherwise.
 function Set-AllInstalledPluginsEnabled {
     $settingsFile  = "$env:USERPROFILE\.claude\settings.json"
     $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
@@ -766,8 +757,18 @@ function Register-Marketplaces {
             Write-Info "  [REFRESH] marketplace $name (already registered, refreshing cache)"
         } else {
             Write-Info "  [NEW]     marketplace $name ($repo)"
-            try { & claude plugin marketplace add $repo 2>&1 | Out-Null } catch {}
-            $global:LASTEXITCODE = 0
+            # Capture exit+stderr — silent fails (network, transient CLI, GitHub
+            # rate-limit) now surface here, not 200 lines later as "not found".
+            $tmpErr = [System.IO.Path]::GetTempFileName()
+            $oldEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            try { $null = & claude plugin marketplace add $repo 2>$tmpErr; $rc = $LASTEXITCODE } finally { $ErrorActionPreference = $oldEAP }
+            $stderr = (Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue); Remove-Item $tmpErr -ErrorAction SilentlyContinue; $global:LASTEXITCODE = 0
+            if ($rc -ne 0 -and $stderr -notmatch '(?i)already (added|registered|exists)') {
+                $errSummary = ($stderr -replace '\s+',' ').Trim()
+                Write-Action "marketplace add failed: $name (exit $rc) - $errSummary"
+                Add-UserAction -Title "Add marketplace $name manually" -Why "Add failed (exit $rc); plugins from $name cannot install until registered. stderr: $errSummary" -Command "claude plugin marketplace add $repo"
+                continue
+            }
         }
         [void](Invoke-MarketplaceUpdate -Name $name -FailContext 'plugin versions may be stale')
     }
