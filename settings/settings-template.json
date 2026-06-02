@@ -28,6 +28,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__CLAUDE_HOOKS_DIR__/brainstorm-reminder.js\"",
+            "timeout": 5000
+          }
+        ]
+      }
     ]
   }
 }

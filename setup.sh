@@ -149,6 +149,28 @@ resolve_windows_claude_home() {
 # Windows user's home dir (e.g. /mnt/c/Users/Admin).
 EFFECTIVE_HOME="$HOME"
 
+# Installs Node-based UserPromptSubmit / SessionStart hook scripts shipped in
+# the repo's hooks/ dir to ~/.claude/hooks/. Idempotent; sets $HOOKS_DIR.
+HOOKS_DIR=""
+install_hooks() {
+  HOOKS_DIR="$EFFECTIVE_HOME/.claude/hooks"
+  mkdir -p "$HOOKS_DIR"
+  if [[ -d "$SCRIPT_DIR/hooks" ]]; then
+    cp -f "$SCRIPT_DIR/hooks/"*.js "$HOOKS_DIR/" 2>/dev/null || true
+    log_info "Hooks installed to $HOOKS_DIR"
+  fi
+}
+
+# Renders settings template with __CLAUDE_HOOKS_DIR__ substituted to the
+# actual hooks install path, then writes to the destination file.
+write_rendered_settings() {
+  local dest="$1"
+  [[ -n "$HOOKS_DIR" ]] || install_hooks
+  # | as sed delimiter since HOOKS_DIR contains /
+  sed "s|__CLAUDE_HOOKS_DIR__|${HOOKS_DIR}|g" \
+    "$SCRIPT_DIR/settings/settings-template.json" > "$dest"
+}
+
 write_settings() {
   local settings_dir="$EFFECTIVE_HOME/.claude"
   local settings_file="$settings_dir/settings.json"
@@ -157,8 +179,8 @@ write_settings() {
     cp "$settings_file" "${settings_file}.bak"
     log_warn "Backed up existing settings.json to ${settings_file}.bak"
   fi
-  cp "$SCRIPT_DIR/settings/settings-template.json" "$settings_file"
-  log_info "Secrets protection written to $settings_file"
+  write_rendered_settings "$settings_file"
+  log_info "Secrets protection + hooks written to $settings_file"
 }
 
 write_project_settings() {
@@ -169,8 +191,8 @@ write_project_settings() {
     cp "$project_settings_file" "${project_settings_file}.bak"
     log_warn "Backed up existing project settings.json"
   fi
-  cp "$SCRIPT_DIR/settings/settings-template.json" "$project_settings_file"
-  log_info "Project-level secrets protection written to $project_settings_file"
+  write_rendered_settings "$project_settings_file"
+  log_info "Project-level secrets protection + hooks written to $project_settings_file"
 }
 
 copy_claude_md() {

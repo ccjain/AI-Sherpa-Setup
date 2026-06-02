@@ -844,6 +844,30 @@ function Install-Skills {
     }
 }
 
+# Installs Node-based UserPromptSubmit / SessionStart hook scripts shipped
+# in the repo's hooks/ dir to ~/.claude/hooks/. Returns the install path
+# with forward slashes so it can be embedded directly into JSON (no \ escaping).
+function Install-Hooks {
+    $hooksDir = "$env:USERPROFILE\.claude\hooks"
+    if (-not (Test-Path $hooksDir)) { New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null }
+    $srcHooks = "$ScriptDir\hooks"
+    if (Test-Path $srcHooks) {
+        Copy-Item "$srcHooks\*.js" $hooksDir -Force -ErrorAction SilentlyContinue
+        Write-Info "Hooks installed to $hooksDir"
+    }
+    return ($hooksDir -replace '\\', '/')
+}
+
+# Renders the settings template with __CLAUDE_HOOKS_DIR__ substituted to
+# the actual hooks install path, then writes to $DestPath as UTF-8.
+function Write-RenderedSettings {
+    param([string]$DestPath)
+    $hooksDir = Install-Hooks
+    $template = Get-Content "$ScriptDir\settings\settings-template.json" -Raw
+    $rendered = $template.Replace('__CLAUDE_HOOKS_DIR__', $hooksDir)
+    [System.IO.File]::WriteAllText($DestPath, $rendered, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function Write-GlobalSettings {
     $settingsDir  = "$env:USERPROFILE\.claude"
     $settingsFile = "$settingsDir\settings.json"
@@ -852,8 +876,8 @@ function Write-GlobalSettings {
         Copy-Item $settingsFile "$settingsFile.bak" -Force
         Write-Warn "Backed up existing global settings.json to settings.json.bak"
     }
-    Copy-Item "$ScriptDir\settings\settings-template.json" $settingsFile -Force
-    Write-Info "Secrets protection written to $settingsFile"
+    Write-RenderedSettings -DestPath $settingsFile
+    Write-Info "Secrets protection + hooks written to $settingsFile"
 }
 
 function Write-ProjectSettings {
@@ -864,8 +888,8 @@ function Write-ProjectSettings {
         Copy-Item $projectSettingsFile "$projectSettingsFile.bak" -Force
         Write-Warn "Backed up existing project settings.json"
     }
-    Copy-Item "$ScriptDir\settings\settings-template.json" $projectSettingsFile -Force
-    Write-Info "Project-level secrets protection written to $projectSettingsFile"
+    Write-RenderedSettings -DestPath $projectSettingsFile
+    Write-Info "Project-level secrets protection + hooks written to $projectSettingsFile"
 }
 
 function Copy-ClaudeMd {
