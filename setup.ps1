@@ -137,10 +137,13 @@ function Get-PlatformArchKey {
 #   node   18.0.0  -> Claude Code requirement (per Anthropic docs)
 #   git    2.30.0  -> safe modern baseline; covers `git clone --depth`, partial-clone, etc.
 #   claude 2.0.0   -> introduces the plugin system + `--scope` flag used by Install-Plugin
+#   python 3.10.0  -> minimum for code-review-graph + typical modern PyPI tools; winget
+#                     installs 3.12 so this is the floor, not the target.
 $script:MinVersions = @{
     node   = [version]'18.0.0'
     git    = [version]'2.30.0'
     claude = [version]'2.0.0'
+    python = [version]'3.10.0'
 }
 
 function Get-VersionFromString {
@@ -159,6 +162,27 @@ function Get-ToolVersion {
         $out = & $Cmd $Arg 2>&1 | Out-String
         return (Get-VersionFromString $out)
     } catch { return $null }
+}
+
+# Python version probe. Windows 11 ships a Microsoft Store stub at
+# %LocalAppData%\Microsoft\WindowsApps\python.exe that's first on PATH for many
+# users — running it WITHOUT args opens the Store, and `--version` returns
+# nothing useful. Get-ToolVersion 'python' therefore lies on a fresh box.
+#
+# Probe order: `py -3 --version` (the Python launcher; ignores the Store stub
+# and finds any real Python install), then python3, then python as last resort.
+function Get-PythonVersion {
+    foreach ($cand in @('py', 'python3', 'python')) {
+        if (-not (Test-CommandExists $cand)) { continue }
+        try {
+            $pyArgs = if ($cand -eq 'py') { @('-3', '--version') } else { @('--version') }
+            $out = & $cand @pyArgs 2>&1 | Out-String
+            $v = Get-VersionFromString $out
+            # MS Store stub returns empty/junk → no version → skip and try next.
+            if ($v) { return $v }
+        } catch {}
+    }
+    return $null
 }
 
 function Update-PathFromRegistry {
@@ -216,6 +240,19 @@ function Install-NodeJS {
         Update-PathFromRegistry
         $current = Get-ToolVersion 'node'
         if (-not $current) {
+            # Same winget-MSI race as Install-Git: --silent returns before the
+            # installer's PATH entry is written. Probe the canonical install
+            # dir and prepend in-process so this run can continue.
+            foreach ($probe in @("$env:ProgramFiles\nodejs", "${env:ProgramFiles(x86)}\nodejs")) {
+                if ((Test-Path (Join-Path $probe 'node.exe')) -and ($env:Path -split ';' -notcontains $probe)) {
+                    $env:Path = "$probe;$env:Path"
+                    Write-Info "Prepended '$probe' to session PATH (winget hadn't propagated yet)."
+                    break
+                }
+            }
+            $current = Get-ToolVersion 'node'
+        }
+        if (-not $current) {
             Write-Action "Node.js installed but 'node' isn't on PATH in this shell."
             Add-UserAction -Title "Make Node.js visible to this shell" `
                            -Why "winget installed Node, but this PowerShell session's PATH was captured before that — `node` won't resolve until you start a fresh shell. Minimum required: Node.js $min." `
@@ -254,6 +291,20 @@ function Install-Git {
         }
         Update-PathFromRegistry
         $current = Get-ToolVersion 'git'
+        if (-not $current) {
+            # winget --silent returns when the MSI hands off, BEFORE the Git
+            # installer's PATH write lands in the registry. Update-PathFromRegistry
+            # then reads stale state. Fall back to probing the known install dir
+            # and prepending it in-process so the same setup run can continue.
+            foreach ($probe in @("$env:ProgramFiles\Git\cmd", "${env:ProgramFiles(x86)}\Git\cmd")) {
+                if ((Test-Path (Join-Path $probe 'git.exe')) -and ($env:Path -split ';' -notcontains $probe)) {
+                    $env:Path = "$probe;$env:Path"
+                    Write-Info "Prepended '$probe' to session PATH (winget hadn't propagated yet)."
+                    break
+                }
+            }
+            $current = Get-ToolVersion 'git'
+        }
         if (-not $current) {
             Write-Action "Git installed but 'git' isn't on PATH in this shell."
             Add-UserAction -Title "Make Git visible to this shell" `
@@ -334,21 +385,39 @@ function Install-ClaudeCode {
             Write-Err "Minimum required: Claude Code $min. Install manually: npm install -g @anthropic-ai/claude-code@latest"
             exit 1
         }
-    } else {
-        # Always try to bump to latest so newly-added CLI flags (e.g. `claude plugin install --scope`)
-        # are available. npm install -g is idempotent and a no-op if already at latest.
-        Write-Info "Claude Code $current found. Upgrading to latest..."
-        npm install -g @anthropic-ai/claude-code@latest
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "Failed to upgrade Claude Code (exit $LASTEXITCODE). Will validate current version against minimum."
-            $global:LASTEXITCODE = 0
+        # npm install -g drops claude.cmd into %APPDATA%\npm\ on Windows. Node's
+        # installer does NOT add that dir to PATH (npm creates it lazily on first
+        # global install), so even Update-PathFromRegistry can't fix this case —
+        # the directory has simply never been on any registry PATH entry. Prepend
+        # it in-process so the version probe below can find the shim.
+        $npmGlobal = Join-Path $env:APPDATA 'npm'
+        if ((Test-Path $npmGlobal) -and ($env:Path -split ';' -notcontains $npmGlobal)) {
+            $env:Path = "$npmGlobal;$env:Path"
+            Write-Info "Prepended '$npmGlobal' to session PATH (npm global prefix)."
+        }
+        $current = Get-ToolVersion 'claude'
+        if (-not $current) {
+            Write-Action "Claude Code installed but 'claude' isn't on PATH in this shell."
+            Add-UserAction -Title "Make Claude Code visible to this shell" `
+                           -Why "npm installed claude.cmd into %APPDATA%\npm\, but PATH didn't pick it up — likely a stale session or a non-standard npm prefix. Minimum required: Claude Code $min." `
+                           -Command "Close this terminal, open a new one, then re-run: setup.bat"
+            Show-UserActionsReport
+            exit 1
         }
     }
-    $current = Get-ToolVersion 'claude'
-    if (-not $current -or $current -lt $min) {
-        Write-Err "Claude Code is $current (below minimum $min)."
-        Write-Err "Upgrade manually and re-run: npm install -g @anthropic-ai/claude-code@latest"
-        exit 1
+    if ($current -lt $min) {
+        Write-Warn "Claude Code $current is below minimum $min. Attempting npm upgrade..."
+        npm install -g @anthropic-ai/claude-code@latest
+        # npm install -g is idempotent; tolerate non-zero exit so we still
+        # re-validate the version below rather than aborting on a transient
+        # upgrade failure.
+        $global:LASTEXITCODE = 0
+        $current = Get-ToolVersion 'claude'
+        if (-not $current -or $current -lt $min) {
+            Write-Err "Claude Code is $current (below minimum $min) and auto-upgrade did not bump it."
+            Write-Err "Upgrade manually and re-run: npm install -g @anthropic-ai/claude-code@latest"
+            exit 1
+        }
     }
     Write-Info "Claude Code $current OK (>= $min)."
 }
@@ -1105,19 +1174,60 @@ function Add-PythonUserScriptsToPath {
 }
 
 function Install-Python {
-    Write-Info "Python pip not found. Installing Python 3.12 via winget..."
-    winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warn "winget failed to install Python (exit $LASTEXITCODE)."
-        Add-SkippedStep -Name "code-review-graph (auto-mode code review indexing)" `
-                        -Reason "Python install failed (winget exit $LASTEXITCODE)" `
-                        -ManualInstall "Download Python 3 from https://python.org, then re-run setup.bat"
-        return $false
+    $min = $script:MinVersions.python
+    $current = Get-PythonVersion
+    if (-not $current) {
+        Write-Info "Python not found. Installing Python 3.12 via winget (minimum required: $min)..."
+        winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "winget failed to install Python (exit $LASTEXITCODE)."
+            Write-Err "Minimum required: Python $min. Install manually from https://python.org and re-run."
+            exit 1
+        }
+        Update-PathFromRegistry
+        # Same winget MSI race as Install-Git / Install-NodeJS / Install-ClaudeCode:
+        # `winget --silent` returns when the MSI hands off, BEFORE the Python
+        # installer's PATH writes land in the registry. Probe canonical Python
+        # install dirs (per-user is the winget default; per-machine as fallback)
+        # and prepend in-process so subsequent steps can resolve python/pip in
+        # the same shell.
+        $pythonDirs = @(
+            "$env:LocalAppData\Programs\Python\Python312",
+            "$env:LocalAppData\Programs\Python\Python312\Scripts",
+            "$env:ProgramFiles\Python312",
+            "$env:ProgramFiles\Python312\Scripts"
+        )
+        foreach ($probe in $pythonDirs) {
+            if ((Test-Path $probe) -and ($env:Path -split ';' -notcontains $probe)) {
+                $env:Path = "$probe;$env:Path"
+                Write-Info "Prepended '$probe' to session PATH (Python install dir)."
+            }
+        }
+        $current = Get-PythonVersion
+        if (-not $current) {
+            Write-Action "Python installed but 'python' / 'py' isn't on PATH in this shell."
+            Add-UserAction -Title "Make Python visible to this shell" `
+                           -Why "winget installed Python 3.12, but this PowerShell session's PATH was captured before that — `python` won't resolve until you start a fresh shell. Minimum required: Python $min." `
+                           -Command "Close this terminal, open a new one, then re-run: setup.bat"
+            Show-UserActionsReport
+            exit 1
+        }
     }
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("Path","User")
-    Write-Info "Python installed."
-    return $true
+    if ($current -lt $min) {
+        Write-Warn "Python $current is below minimum $min. Attempting winget upgrade..."
+        winget upgrade Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
+        # Tolerate non-zero exit: "no upgrade available" / "package not installed by winget"
+        # are reported as failures but aren't fatal — re-check the version instead.
+        $global:LASTEXITCODE = 0
+        Update-PathFromRegistry
+        $current = Get-PythonVersion
+        if (-not $current -or $current -lt $min) {
+            Write-Err "Python is $current (below minimum $min) and auto-upgrade did not bump it."
+            Write-Err "Upgrade manually from https://python.org/downloads and re-run setup."
+            exit 1
+        }
+    }
+    Write-Info "Python $current OK (>= $min)."
 }
 
 function Install-PyPiTool {
@@ -1143,17 +1253,16 @@ function Install-PyPiTool {
     if (Test-CommandExists "uv")   { $attempts += 'uv'   }
     if (Test-CommandExists "pipx") { $attempts += 'pipx' }
 
+    # Python is installed as an upfront prereq (see main flow), so pip should
+    # always be on PATH by the time we reach here. If it isn't, the user's
+    # install is broken in a way setup can't paper over — surface a clear
+    # SkippedStep instead of trying to bootstrap something else.
     $pipCmd = Resolve-PipCommand
     if (-not $pipCmd -and $attempts.Count -eq 0) {
-        if (-not (Install-Python)) { return }
-        $pipCmd = Resolve-PipCommand
-        if (-not $pipCmd) {
-            Write-Warn "Python installed but pip is not yet on PATH."
-            Add-SkippedStep -Name "$Name (PyPI tool)" `
-                            -Reason "Python installed but no pip/pipx/uv on PATH in this shell" `
-                            -ManualInstall "Close and reopen the terminal, then re-run setup.bat"
-            return
-        }
+        Add-SkippedStep -Name "$Name (PyPI tool)" `
+                        -Reason "No PyPI installer (uv/pipx/pip) on PATH even though Python was installed upfront — pip may be missing from this Python install" `
+                        -ManualInstall "Reinstall Python from https://python.org (ensure pip is included and 'Add to PATH' is checked), then re-run setup.bat"
+        return
     }
     if ($pipCmd) { $attempts += 'pip-user' }
 
@@ -1879,6 +1988,7 @@ Install-NodeJS
 Install-Git
 Install-ClaudeCode
 Install-Bun
+Install-Python
 
 # Domain selection — DISABLED.
 #
