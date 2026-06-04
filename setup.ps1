@@ -558,7 +558,14 @@ function Set-AllInstalledPluginsEnabled {
     # Depth 10 because settings.json#hooks contains nested arrays-of-objects-
     # of-arrays-of-objects (matcher -> hooks -> command). Default depth (2)
     # would truncate the hooks block to "System.Object[]" garbage on round-trip.
-    $settings | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsFile -Encoding UTF8
+    #
+    # Encoding: write UTF-8 WITHOUT BOM. PS 5.1's `Set-Content -Encoding UTF8`
+    # writes UTF-8 WITH BOM (UTF8NoBOM is PS 7+ only), and strict JSON parsers
+    # — notably rtk's — reject the BOM with "expected value at line 1 column
+    # 1". Write-RenderedSettings already uses this pattern for the initial
+    # render; this round-trip must match or it re-introduces the BOM.
+    $json = $settings | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($settingsFile, $json, (New-Object System.Text.UTF8Encoding($false)))
     if ($disabledCount -gt 0) {
         Write-Info "settings.json#enabledPlugins: $enabledCount enabled, $disabledCount disabled (per plugins.json#disabled_domains)."
     } else {
@@ -1021,7 +1028,11 @@ function Write-AiSherpaState {
         installed = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
         version   = "1"
     }
-    $state | ConvertTo-Json | Set-Content -Path $stateFile -Encoding UTF8
+    # Write UTF-8 WITHOUT BOM (same reasoning as Set-AllInstalledPluginsEnabled).
+    # No strict-parser dependency on this file today, but consistency matters
+    # and PS 5.1's `Set-Content -Encoding UTF8` would silently add a BOM.
+    $stateJson = $state | ConvertTo-Json
+    [System.IO.File]::WriteAllText($stateFile, $stateJson, (New-Object System.Text.UTF8Encoding($false)))
     Write-Info "Recorded domain '$Domain' in $stateFile (for future --update runs)."
 }
 
@@ -1632,6 +1643,57 @@ function Install-Tools {
     }
 }
 
+# rtk ships its own per-session integration: `rtk init -g --auto-patch` creates
+# a global RTK.md (compact tool-usage rules), patches ~/.claude/settings.json
+# to install a UserPromptSubmit hook that loads RTK.md into context every
+# prompt, and adds an @RTK.md reference to ~/.claude/CLAUDE.md. The right
+# frequency for this is "once per machine, idempotent on re-run" — same shape
+# as `git init`. Don't be tempted to put `rtk init` itself in a SessionStart
+# hook; rtk init IS the hook installer, and re-running it every session would
+# be redundant churn.
+#
+# Failure mode: rtk init writes JSON to ~/.claude/settings.json. If that file
+# is malformed UTF (e.g. UTF-16 BOM from a prior PowerShell `Out-File` without
+# -Encoding utf8), rtk skips the patch with "invalid JSON" and the hook never
+# lands. Surface as ACTION REQUIRED rather than silently swallow.
+function Initialize-Rtk {
+    if (-not (Test-CommandExists 'rtk')) {
+        # rtk isn't installed (Install-Tools may have skipped it; e.g. no
+        # github-release tool entry was selected, or the install failed and
+        # was recorded as a SkippedStep). Nothing to initialize.
+        return
+    }
+    Write-Info "Initializing rtk assistant integration (rtk init -g --auto-patch)..."
+    $tmpErr = [System.IO.Path]::GetTempFileName()
+    try {
+        $oldEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try {
+            & rtk init -g --auto-patch 2>$tmpErr | Out-Host
+            $rc = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $oldEAP }
+        $stderr = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue
+    } finally {
+        Remove-Item $tmpErr -ErrorAction SilentlyContinue
+    }
+    $global:LASTEXITCODE = 0
+    if ($rc -eq 0) {
+        Write-Info "rtk initialized (RTK.md + UserPromptSubmit hook + CLAUDE.md @RTK.md reference)."
+        return
+    }
+    $stderrSummary = if ($stderr) { ($stderr -replace '\s+',' ').Trim() } else { '(no stderr)' }
+    if ($stderrSummary -match '(?i)invalid json|parse error|failed to parse|as json|expected value at line') {
+        Write-Action "rtk init failed because ~/.claude/settings.json is not valid JSON."
+        Add-UserAction -Title "Repair settings.json so rtk init can patch it" `
+                       -Why "rtk needs to add its UserPromptSubmit hook to ~/.claude/settings.json but the file currently fails JSON parsing — likely a UTF-16 BOM from a previous PowerShell write. Until it's valid JSON, rtk's per-session rules won't load." `
+                       -Command "Fix ~/.claude/settings.json (must be UTF-8, no BOM, valid JSON), then run: rtk init -g --auto-patch"
+    } else {
+        Write-Warn "rtk init returned exit $rc — rtk's per-session integration may not be active. stderr: $stderrSummary"
+        Add-UserAction -Title "Re-run rtk init manually" `
+                       -Why "Setup tried 'rtk init -g --auto-patch' but it exited $rc. Without it, the model won't be told to prefer rtk wrappers (rtk git, rtk grep, etc) for token-compressed output." `
+                       -Command "rtk init -g --auto-patch"
+    }
+}
+
 function Test-Installation {
     param([string]$Domain)
     # Primary signal: failures captured from claude plugin install exit codes
@@ -1759,6 +1821,7 @@ function Invoke-Update {
 
     # Upgrade tools: pip --upgrade / cargo --force / git pull.
     Install-Tools -Domain $savedDomain -Upgrade
+    Initialize-Rtk
 
     Write-GlobalSettings
     # Same ordering as the main install flow — must run AFTER
@@ -2107,6 +2170,7 @@ if ($isUserLevelRun) {
     Write-GlobalClaudeMd $domain
     Enable-WindowsLongPaths
     Install-Tools -Domain $domain -Upgrade:$isReinstall
+    Initialize-Rtk
     Write-AiSherpaState -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
@@ -2138,6 +2202,7 @@ if ($isUserLevelRun) {
     Copy-ClaudeMd $domain $projectType
     Enable-WindowsLongPaths
     Install-Tools -Domain $domain -Upgrade:$isReinstall
+    Initialize-Rtk
     Write-AiSherpaState -Domain $domain
     $missing = Test-Installation $domain
     if ($missing.Count -gt 0) {
