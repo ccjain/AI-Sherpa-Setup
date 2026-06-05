@@ -578,18 +578,13 @@ install_skills() {
 }
 
 print_summary() {
-  local domain="$1" user_level="${2:-false}"
+  local domain="$1"
   echo -e "\n${CYAN}======================================================${NC}"
   echo -e "${CYAN}  AI Sherpa Setup Complete${NC}"
   echo -e "${CYAN}======================================================${NC}"
   echo "  Domain:   $domain"
   echo "  Settings: $EFFECTIVE_HOME/.claude/settings.json  (secrets protection active)"
-  if [[ "$user_level" == true ]]; then
-    echo "  Rules:    $EFFECTIVE_HOME/.claude/CLAUDE.md  (active for all projects)"
-  else
-    echo "  Settings: $PWD/.claude/settings.json   (project-level)"
-    echo "  Rules:    CLAUDE.md installed in $PWD"
-  fi
+  echo "  Rules:    $EFFECTIVE_HOME/.claude/CLAUDE.md  (active for all projects)"
   echo ""
   echo "  Next steps:"
   echo "  1. Start Claude Code:   claude"
@@ -1554,13 +1549,6 @@ main() {
     exit 0
   fi
 
-  # Detect user-level (run from inside the AI Sherpa repo) vs project-level run
-  local is_user_level=false
-  if [[ -f "$SCRIPT_DIR/core/CLAUDE.md" && "$PWD" == "$SCRIPT_DIR" ]]; then
-    is_user_level=true
-    log_info "Running from inside AI Sherpa repo — installing at USER level (~/.claude/)."
-  fi
-
   # --- Prerequisites ---
   log_info "Checking prerequisites..."
 
@@ -1641,34 +1629,13 @@ main() {
     *)  log_error "Invalid choice: $domain_choice. Run the script again."; exit 1 ;;
   esac
 
-  # --- New or existing project (project-level only) ---
-  local project_type=""
-  if [[ "$is_user_level" != true ]]; then
-    echo ""
-    echo "New project or existing project?"
-    echo "  [1] New project"
-    echo "  [2] Existing project (CLAUDE.md will be appended, not replaced)"
-    echo ""
-    read -rp "Enter number [1-2]: " project_choice
-    case "$project_choice" in
-      1) project_type="new" ;;
-      2) project_type="existing" ;;
-      *) log_error "Invalid choice: $project_choice. Run the script again."; exit 1 ;;
-    esac
-  fi
-
   # --- Install ---
   register_marketplaces "$domain"
   install_core_skills
   install_domain_skills "$domain"
   install_skills "$domain"
   write_settings
-  if [[ "$is_user_level" == true ]]; then
-    write_global_claude_md "$domain"
-  else
-    write_project_settings
-    copy_claude_md "$domain" "$project_type"
-  fi
+  write_global_claude_md "$domain"
   install_tools "$domain"
   write_ai_sherpa_state "$domain"
 
@@ -1712,13 +1679,13 @@ main() {
     show_verification_report "$missing"
     show_skipped_steps_report
     show_user_actions_report
-    print_summary "$domain" "$is_user_level"
+    print_summary "$domain"
     exit 1
   fi
   log_info "All expected plugins verified in installed_plugins.json."
   show_skipped_steps_report
   show_user_actions_report
-  print_summary "$domain" "$is_user_level"
+  print_summary "$domain"
 }
 
 # Source guard — prevents main() running when sourced by tests
