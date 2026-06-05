@@ -307,10 +307,14 @@ function Test-PluginInstalled {
     if (-not $installed.plugins.PSObject.Properties[$Key]) { return $null }
     $entries = $installed.plugins.$Key
     if (-not $entries) { return $null }
-    # Prefer the user-scope entry's version (that's what setup.bat installs at).
+    # setup.bat only installs at --scope user, so only a user-scope entry counts
+    # as "installed" here. A stale project-scope entry (e.g. from a prior run in
+    # a different working directory) must NOT be treated as installed — that
+    # falsely sends us down the update path and `claude plugin update --scope
+    # user` then errors with "not installed at scope user".
     $userEntry = $entries | Where-Object { $_.scope -eq 'user' } | Select-Object -First 1
     if ($userEntry) { return $userEntry.version }
-    return $entries[0].version
+    return $null
 }
 
 function Install-NodeJS {
@@ -791,13 +795,21 @@ function Install-Plugin {
     } elseif ($Entry.github) {
         # github source: marketplace name isn't known up-front (claude derives it
         # from the repo), so look up by "<name>@*" prefix in installed_plugins.json.
+        # Filter to scope=user entries only — a stale project-scope entry from
+        # another working directory must not be treated as installed here (same
+        # rationale as Test-PluginInstalled above).
         $installedFile = "$env:USERPROFILE\.claude\plugins\installed_plugins.json"
         $alreadyInstalled = $false
         if (Test-Path $installedFile) {
             try {
                 $j = Get-Content $installedFile -Raw | ConvertFrom-Json
                 if ($j.plugins) {
-                    $alreadyInstalled = @($j.plugins.PSObject.Properties.Name | Where-Object { $_ -like "$($Entry.name)@*" }).Count -gt 0
+                    $alreadyInstalled = @(
+                        $j.plugins.PSObject.Properties |
+                            Where-Object { $_.Name -like "$($Entry.name)@*" } |
+                            ForEach-Object { $_.Value } |
+                            Where-Object { $_.scope -eq 'user' }
+                    ).Count -gt 0
                 }
             } catch {}
         }
