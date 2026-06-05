@@ -81,7 +81,13 @@
         "name": "code-review-graph",
         "source": "pypi",
         "package": "code-review-graph",
-        "postInstall": "code-review-graph install"
+        "postInstall": "code-review-graph install",
+        "mcp": {
+          "command": "uvx",
+          "args": ["code-review-graph", "serve"],
+          "fallbackCommand": "code-review-graph",
+          "fallbackArgs": ["serve"]
+        }
       },
       {
         "name": "rtk",

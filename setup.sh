@@ -1196,6 +1196,86 @@ process.stdin.on('end',()=>{
   done <<< "$entries"
 }
 
+# Walks plugins.json tools.* entries that declare an `mcp` field and registers
+# each as a user-scope MCP server (`claude mcp add -s user`).
+#
+# Why user scope: project-scope (.mcp.json shipped in a repo) is treated as
+# untrusted-by-default by Claude Code — the server appears in /mcp but is
+# disabled until the user explicitly approves it per repo, and a hardcoded
+# absolute `cwd` in the file fails on any machine other than the maintainer's.
+# User-scope registration is approved-on-install and works from any cwd.
+#
+# Idempotency: `claude mcp get NAME` exits 0 iff Claude already knows that
+# server in any scope. We skip in that case so re-running setup is cheap.
+#
+# Fallback: if the entry's declared command (e.g. uvx) isn't on PATH, fall
+# back to its `fallbackCommand` (typically the entry-point binary from
+# pip-user) so the server still launches.
+install_mcp_servers() {
+  local domain="${1:-}"
+  local config_file="$SCRIPT_DIR/plugins.json"
+  [[ -f "$config_file" ]] || return 0
+
+  local entries
+  entries=$(node -e "
+let raw='';process.stdin.setEncoding('utf8');
+process.stdin.on('data',d=>raw+=d);
+process.stdin.on('end',()=>{
+  let c;try{c=JSON.parse(raw)}catch(e){process.exit(0)}
+  const d='$domain';const t=c.tools||{};
+  const es=[].concat(t.global||[]).concat((d&&t[d])||[]);
+  es.filter(e=>e&&e.mcp).forEach(e=>{
+    const m=e.mcp;
+    process.stdout.write([
+      e.name||'',
+      m.command||'',
+      (m.args||[]).join(' '),
+      m.fallbackCommand||'',
+      (m.fallbackArgs||[]).join(' ')
+    ].join('\t')+'\n');
+  });
+});
+" < "$config_file")
+  [[ -z "$entries" ]] && return 0
+
+  if ! command -v claude >/dev/null 2>&1; then
+    while IFS=$'\t' read -r name command args _ _; do
+      [[ -z "$name" ]] && continue
+      add_user_action "Register $name as MCP server" \
+        "claude CLI wasn't on PATH in this shell so setup couldn't run 'claude mcp add'. Without registration, $name won't show in /mcp." \
+        "claude mcp add -s user $name -- $command $args"
+    done <<< "$entries"
+    return 0
+  fi
+
+  while IFS=$'\t' read -r name command args fb_cmd fb_args; do
+    [[ -z "$name" ]] && continue
+
+    if claude mcp get "$name" >/dev/null 2>&1; then
+      log_info "  [SKIP]   MCP server '$name' already registered"
+      continue
+    fi
+
+    if ! command -v "$command" >/dev/null 2>&1 \
+        && [[ -n "$fb_cmd" ]] && command -v "$fb_cmd" >/dev/null 2>&1; then
+      log_info "  '$command' not on PATH — registering '$name' with fallback '$fb_cmd'."
+      command="$fb_cmd"
+      args="$fb_args"
+    fi
+
+    log_info "Registering MCP server '$name' (user scope)..."
+    # shellcheck disable=SC2086  # word-splitting on $args is intentional
+    if claude mcp add -s user "$name" -- "$command" $args; then
+      log_info "MCP server '$name' registered."
+    else
+      local rc=$?
+      add_skipped_step "$name (MCP server)" \
+        "claude mcp add exited $rc" \
+        "claude mcp add -s user $name -- $command $args"
+    fi
+  done <<< "$entries"
+}
+
 verify_installation() {
   local domain="$1"
   # Primary signal: claude plugin install exit codes captured during install
@@ -1301,6 +1381,7 @@ run_update() {
 
   # Upgrade tools: pip --upgrade / cargo --force / git pull
   install_tools "$saved_domain" "true"
+  install_mcp_servers "$saved_domain"
 
   write_settings
   log_info "Update complete. Plugins, skills, and tools refreshed to latest${saved_domain:+ for domain '$saved_domain'}."
@@ -1593,6 +1674,7 @@ main() {
   write_settings
   write_global_claude_md "$domain"
   install_tools "$domain"
+  install_mcp_servers "$domain"
   write_ai_sherpa_state "$domain"
 
   # --- Embedded-specific: detect Windows toolchains/flashers via powershell.exe ---

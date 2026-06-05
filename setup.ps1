@@ -1766,6 +1766,93 @@ function Initialize-Rtk {
     }
 }
 
+# Walks plugins.json tools.* entries that declare an `mcp` field and registers
+# each as a user-scope MCP server with Claude Code (`claude mcp add -s user`).
+#
+# Why user scope: project-scope (.mcp.json shipped in a repo) is treated as
+# untrusted-by-default by Claude Code — the server appears in /mcp but is
+# disabled until the user explicitly approves it per repo, and a hardcoded
+# absolute `cwd` in the file fails on any machine other than the maintainer's.
+# User-scope registration is approved-on-install and works from any cwd.
+#
+# Idempotency: `claude mcp get NAME` exits 0 iff Claude already knows that
+# server (in any scope). We skip in that case so re-running setup is cheap.
+#
+# Fallback: the primary command is whatever the entry declares (uvx is the
+# proven default for code-review-graph). If its leading binary isn't on PATH
+# in this shell — e.g. uv wasn't installed and we fell through to pip-user
+# in Install-PyPiTool — we fall back to the entry's `fallbackCommand`
+# (typically the entry-point binary from pip-user) so the server still
+# launches.
+#
+# Failure mode: if `claude` itself isn't on PATH in this shell (rare — Claude
+# Code is installed earlier in the main flow), we defer each registration
+# via Add-UserAction with the exact command, same shape as the deferred
+# post-install pattern in Install-PyPiTool.
+function Install-McpServers {
+    param([string]$Domain)
+    $configFile = "$ScriptDir\plugins.json"
+    if (-not (Test-Path $configFile)) { return }
+    try { $config = Get-Content $configFile -Raw | ConvertFrom-Json } catch { return }
+    if (-not $config.tools) { return }
+
+    $entries = @()
+    if ($config.tools.global)               { $entries += @($config.tools.global) }
+    if ($Domain -and $config.tools.$Domain) { $entries += @($config.tools.$Domain) }
+
+    $withMcp = @($entries | Where-Object { $_.mcp })
+    if ($withMcp.Count -eq 0) { return }
+
+    if (-not (Test-CommandExists 'claude')) {
+        foreach ($t in $withMcp) {
+            $cmd = "claude mcp add -s user $($t.name) -- $($t.mcp.command) $(@($t.mcp.args) -join ' ')"
+            Add-UserAction -Title "Register $($t.name) as MCP server" `
+                           -Why "claude CLI wasn't on PATH in this shell so setup couldn't run 'claude mcp add'. Without registration, $($t.name) won't show in /mcp." `
+                           -Command $cmd
+        }
+        return
+    }
+
+    foreach ($t in $withMcp) {
+        $name = $t.name
+        # `claude mcp get` returns 0 when the named server is registered in
+        # *any* scope. Skip in that case — the user (or a prior setup run)
+        # already wired it up; re-adding would error or duplicate.
+        & claude mcp get $name *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Info "  [SKIP]   MCP server '$name' already registered"
+            $global:LASTEXITCODE = 0
+            continue
+        }
+        $global:LASTEXITCODE = 0
+
+        # Resolve the launch command. Primary is the declared one (e.g. uvx);
+        # fall back to the entry's direct binary if uvx isn't reachable in
+        # this shell. We probe Test-CommandExists on the *first token* only.
+        $command = $t.mcp.command
+        $argsList = @($t.mcp.args)
+        if (-not (Test-CommandExists $command) -and $t.mcp.fallbackCommand `
+                -and (Test-CommandExists $t.mcp.fallbackCommand)) {
+            Write-Info "  '$command' not on PATH — registering '$name' with fallback '$($t.mcp.fallbackCommand)'."
+            $command = $t.mcp.fallbackCommand
+            $argsList = @($t.mcp.fallbackArgs)
+        }
+
+        Write-Info "Registering MCP server '$name' (user scope)..."
+        $claudeArgs = @('mcp', 'add', '-s', 'user', $name, '--', $command) + $argsList
+        & claude @claudeArgs
+        if ($LASTEXITCODE -eq 0) {
+            Write-Info "MCP server '$name' registered."
+        } else {
+            $rc = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+            Add-SkippedStep -Name "$name (MCP server)" `
+                            -Reason "claude mcp add exited $rc" `
+                            -ManualInstall "claude mcp add -s user $name -- $command $($argsList -join ' ')"
+        }
+    }
+}
+
 function Test-Installation {
     param([string]$Domain)
     # Primary signal: failures captured from claude plugin install exit codes
@@ -1894,6 +1981,7 @@ function Invoke-Update {
     # Upgrade tools: pip --upgrade / cargo --force / git pull.
     Install-Tools -Domain $savedDomain -Upgrade
     Initialize-Rtk
+    Install-McpServers -Domain $savedDomain
 
     Write-GlobalSettings
     # Same ordering as the main install flow — must run AFTER
@@ -2245,6 +2333,7 @@ Write-GlobalClaudeMd $domain
 Enable-WindowsLongPaths
 Install-Tools -Domain $domain -Upgrade:$isReinstall
 Initialize-Rtk
+Install-McpServers -Domain $domain
 Write-AiSherpaState -Domain $domain
 $missing = Test-Installation $domain
 if ($missing.Count -gt 0) {
