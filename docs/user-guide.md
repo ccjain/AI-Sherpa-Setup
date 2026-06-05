@@ -368,7 +368,6 @@ claude plugin install <name>@<marketplace> --scope user
 | Error | Cause | Fix |
 |---|---|---|
 | `setup.sh: 2: set: Illegal option -o pipefail` | You used `sh setup.sh` and `sh` is dash | Use `bash setup.sh` |
-| `[AI Sherpa] Running from inside AI Sherpa repo — installing at USER level` | Not an error — running from repo dir triggers user-level mode | Expected. Rules go to `~/.claude/CLAUDE.md` for all projects. |
 | `sudo: 3 incorrect password attempts` (on Python install) | Your sudo password is wrong | Get the correct sudo password and re-run, or install Python manually (`sudo apt-get install python3 python3-pip`) |
 | `error: externally-managed-environment` (PEP 668) | Ubuntu 24+ blocks system pip globals | Setup uses pipx instead — update to the latest setup.sh and re-run |
 | `Plugin "<name>" not found in marketplace "<name>"` | Wrong plugin name in `plugins.json`, or marketplace is stale | Run `claude plugin marketplace update <marketplace>` and re-run setup |
