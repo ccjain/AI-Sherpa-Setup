@@ -190,6 +190,35 @@ function Update-PathFromRegistry {
                 [System.Environment]::GetEnvironmentVariable('Path','User')
 }
 
+# Bump Claude Code's plugin git timeout so slow networks / large marketplace
+# repos (e.g. antigravity) don't time out during `claude plugin marketplace
+# add|update`. Claude Code's built-in default is 120000 ms (120s); we set
+# 900000 ms (15 min) which covers the worst real-world cases we've seen.
+#
+# Respects user override: if the User-scope env var is already set, we leave
+# it alone (user is in charge). Always sets $env: for the current process so
+# the in-progress setup run also benefits — without this, the persistent
+# value would only take effect in *future* shells, not the one running setup.
+function Set-PluginGitTimeout {
+    $varName  = 'CLAUDE_CODE_PLUGIN_GIT_TIMEOUT_MS'
+    $desired  = '900000'
+    $existing = [Environment]::GetEnvironmentVariable($varName, 'User')
+    if ([string]::IsNullOrWhiteSpace($existing)) {
+        try {
+            [Environment]::SetEnvironmentVariable($varName, $desired, 'User')
+            Write-Info "Set $varName=$desired (User scope, 15 min) — prevents marketplace install timeouts."
+        } catch {
+            Write-Warn "Could not persist ${varName}: $($_.Exception.Message). Setting for current process only."
+        }
+    } else {
+        Write-Info "Honoring existing $varName=$existing (User scope, set by you)."
+        $desired = $existing
+    }
+    # Always reflect into the current process so the in-progress setup run
+    # uses the bumped timeout for its own marketplace add/refresh ops.
+    $env:CLAUDE_CODE_PLUGIN_GIT_TIMEOUT_MS = $desired
+}
+
 # Wrapper for `winget install/upgrade` that retries on the Windows MSI mutex
 # (ERROR_INSTALL_ALREADY_RUNNING = 1618). winget --silent re-emits the
 # underlying installer's "Another installation is already in progress" text
@@ -862,6 +891,11 @@ function Register-Marketplaces {
     if (-not (Test-Path $configFile)) { return }
     try { $config = Get-Content $configFile -Raw | ConvertFrom-Json }
     catch { return }
+
+    # Bump plugin git timeout BEFORE any `claude plugin marketplace add|update`
+    # below — slow networks + large marketplace repos (e.g. antigravity) blow
+    # past the 120s default. Idempotent; honors a pre-existing user override.
+    Set-PluginGitTimeout
 
     # Build name -> repo map of marketplaces declared in plugins.json.
     $declared = @{}
