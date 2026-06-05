@@ -22,7 +22,7 @@ When a developer runs the setup script, the script:
 | Layer | Technology |
 |---|---|
 | Setup scripts | Bash (`setup.sh`), PowerShell (`setup.ps1`), Batch (`setup.bat`) |
-| Runtime deps | Node.js 20+ (for Claude Code CLI and npm plugins), Git, Python 3 with pip (optional, for Graphify) |
+| Runtime deps | Node.js 20+ (for Claude Code CLI and npm plugins), Git, Python 3 with pip (for code-review-graph) |
 | Configuration | JSON (`plugins.json`, `settings-template.json`) |
 | Documentation | Markdown (all docs and `CLAUDE.md` rule files) |
 | Testing | Bash (`scripts/test-setup.sh`) |
@@ -151,23 +151,24 @@ The test script:
 
 ### Normal Run (first-time setup)
 ```bash
-# Windows (run from the target project directory, NOT from inside ai-sherpa)
+# Windows
 C:\tools\ai-sherpa\setup.bat
 
 # Linux/macOS
 bash ~/tools/ai-sherpa/setup.sh
 ```
 
+Setup writes only to `~/.claude/`. The current working directory does not affect what gets installed.
+
 Flow:
-1. Check/install Node.js, Git, Claude Code CLI
-2. Prompt for domain (1–11 options: embedded, web, backend, data, devops, marketing, sales, finance, service, procurement, uiux)
-3. Prompt for new vs. existing project
-4. Register marketplaces from `plugins.json`
-5. Install global plugins, then domain-specific plugins
-6. Write `settings.json` (global + project)
-7. Copy domain `CLAUDE.md` into project root (appends if existing project)
-8. Install Graphify (if Python pip is available)
-9. Print summary
+1. Check/install Node.js, Git, Python 3, Claude Code CLI
+2. Prompt for domain (1–11 options: embedded, web, data, devops, marketing, sales, finance, service, procurement, ai, frontend)
+3. Register marketplaces from `plugins.json`
+4. Install global plugins, then domain-specific plugins
+5. Write `~/.claude/settings.json` (global; applies to every Claude session)
+6. Write merged core + domain rules to `~/.claude/CLAUDE.md` (global; applies to every Claude session)
+7. Install code-review-graph (runs in auto mode via SessionStart hook)
+8. Print summary
 
 ### Update Run
 ```bash
@@ -175,11 +176,10 @@ setup.bat --update      # Windows
 ./setup.sh --update     # Linux/macOS
 ```
 
-Updates core skills and settings only. **Does NOT overwrite project-specific CLAUDE.md customisations.**
+Updates core skills and global settings.
 
 ### Guardrails
-- Setup refuses to run if executed from inside the AI Sherpa repo itself (detects `core/CLAUDE.md` in `$PWD`).
-- Existing `settings.json` and `CLAUDE.md` files are backed up (`.bak`) before overwriting.
+- Existing `~/.claude/settings.json` and `~/.claude/CLAUDE.md` files are backed up (`.bak`) before overwriting.
 
 ---
 
