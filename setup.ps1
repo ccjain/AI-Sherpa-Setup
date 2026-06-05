@@ -190,6 +190,64 @@ function Update-PathFromRegistry {
                 [System.Environment]::GetEnvironmentVariable('Path','User')
 }
 
+# Wrapper for `winget install/upgrade` that retries on the Windows MSI mutex
+# (ERROR_INSTALL_ALREADY_RUNNING = 1618). winget --silent re-emits the
+# underlying installer's "Another installation is already in progress" text
+# to stdout and translates 1618 into its own generic exit 0x8A150042 (signed
+# -1978334974), so we can't detect the transient from exit code alone —
+# capture combined output, pattern-match the marker, retry with backoff.
+# Other failures fail fast on the first attempt.
+#
+# Real-world trigger seen in the wild: a colleague's box was running a
+# Windows Update install when setup.bat fired, blowing up Install-Python
+# entirely. With Windows Update / AV updates / vendor agents on every
+# corporate box, this is not rare.
+#
+# Usage: $rc = Invoke-Winget -Verb install -PackageId 'Python.Python.3.12'
+function Invoke-Winget {
+    param(
+        [Parameter(Mandatory)][ValidateSet('install', 'upgrade')][string]$Verb,
+        [Parameter(Mandatory)][string]$PackageId,
+        [int]$MaxAttempts = 3,
+        [int]$DelaySeconds = 30
+    )
+    $tmpOut = [System.IO.Path]::GetTempFileName()
+    $finalRc = 0
+    try {
+        for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            # Local EAP=Continue so any stderr line winget writes doesn't get
+            # wrapped as NativeCommandError and aborted under the script's
+            # global Stop preference (same pattern as Invoke-PluginCommand).
+            $oldEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            try {
+                # *> merges stdout/stderr/info/warning into the temp file so
+                # we can inspect for the MSI-mutex marker. winget proxies the
+                # underlying installer's progress mostly through stdout and
+                # the mutex error line comes from the same path.
+                & winget $Verb $PackageId --silent --accept-package-agreements --accept-source-agreements *> $tmpOut
+                $finalRc = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $oldEAP }
+            $output = Get-Content $tmpOut -Raw -ErrorAction SilentlyContinue
+            if ($output) { Write-Host $output.TrimEnd() }
+            if ($finalRc -eq 0) { break }
+            # Pattern-match for the MSI mutex. Exact wording varies by Windows
+            # Installer locale — match on the numeric code, the canonical
+            # English message, and the "try again later" hint as belt-and-
+            # suspenders. The 1618 word-boundary check avoids matching it
+            # inside arbitrary hex blobs in the output.
+            $isTransient = $output -match '(?i)\b1618\b|Another installation is already in progress|Try again later'
+            if (-not $isTransient -or $attempt -eq $MaxAttempts) { break }
+            Write-Warn "winget hit Windows Installer mutex (another installer is running — probably Windows Update or an AV agent). Waiting ${DelaySeconds}s before retry $($attempt + 1)/$MaxAttempts..."
+            Start-Sleep -Seconds $DelaySeconds
+            Clear-Content $tmpOut -ErrorAction SilentlyContinue
+        }
+    } finally {
+        Remove-Item $tmpOut -ErrorAction SilentlyContinue
+    }
+    $global:LASTEXITCODE = $finalRc
+    return $finalRc
+}
+
 # Returns $true if the named marketplace is already registered in
 # ~/.claude/plugins/known_marketplaces.json. Used by Register-Marketplaces to
 # log [NEW] vs [REFRESH] honestly and skip the redundant `marketplace add`
@@ -231,9 +289,9 @@ function Install-NodeJS {
     $current = Get-ToolVersion 'node'
     if (-not $current) {
         Write-Info "Node.js not found. Installing via winget (minimum required: $min)..."
-        winget install OpenJS.NodeJS --silent --accept-package-agreements --accept-source-agreements
-        if ($LASTEXITCODE -ne 0) {
-            Write-Err "winget failed to install Node.js (exit $LASTEXITCODE)."
+        $rc = Invoke-Winget -Verb install -PackageId 'OpenJS.NodeJS'
+        if ($rc -ne 0) {
+            Write-Err "winget failed to install Node.js (exit $rc after retries)."
             Write-Err "Minimum required: Node.js $min. Install manually from https://nodejs.org and re-run."
             exit 1
         }
@@ -263,7 +321,7 @@ function Install-NodeJS {
     }
     if ($current -lt $min) {
         Write-Warn "Node.js $current is below minimum $min. Attempting winget upgrade..."
-        winget upgrade OpenJS.NodeJS --silent --accept-package-agreements --accept-source-agreements
+        [void](Invoke-Winget -Verb upgrade -PackageId 'OpenJS.NodeJS')
         # Tolerate non-zero exit: "no upgrade available" / "package not installed by winget"
         # are both reported as failures but aren't fatal — re-check the version instead.
         $global:LASTEXITCODE = 0
@@ -283,9 +341,9 @@ function Install-Git {
     $current = Get-ToolVersion 'git'
     if (-not $current) {
         Write-Info "Git not found. Installing via winget (minimum required: $min)..."
-        winget install Git.Git --silent --accept-package-agreements --accept-source-agreements
-        if ($LASTEXITCODE -ne 0) {
-            Write-Err "winget failed to install Git (exit $LASTEXITCODE)."
+        $rc = Invoke-Winget -Verb install -PackageId 'Git.Git'
+        if ($rc -ne 0) {
+            Write-Err "winget failed to install Git (exit $rc after retries)."
             Write-Err "Minimum required: Git $min. Install manually from https://git-scm.com and re-run."
             exit 1
         }
@@ -316,7 +374,7 @@ function Install-Git {
     }
     if ($current -lt $min) {
         Write-Warn "Git $current is below minimum $min. Attempting winget upgrade..."
-        winget upgrade Git.Git --silent --accept-package-agreements --accept-source-agreements
+        [void](Invoke-Winget -Verb upgrade -PackageId 'Git.Git')
         $global:LASTEXITCODE = 0
         Update-PathFromRegistry
         $current = Get-ToolVersion 'git'
@@ -1189,9 +1247,9 @@ function Install-Python {
     $current = Get-PythonVersion
     if (-not $current) {
         Write-Info "Python not found. Installing Python 3.12 via winget (minimum required: $min)..."
-        winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
-        if ($LASTEXITCODE -ne 0) {
-            Write-Err "winget failed to install Python (exit $LASTEXITCODE)."
+        $rc = Invoke-Winget -Verb install -PackageId 'Python.Python.3.12'
+        if ($rc -ne 0) {
+            Write-Err "winget failed to install Python (exit $rc after retries)."
             Write-Err "Minimum required: Python $min. Install manually from https://python.org and re-run."
             exit 1
         }
@@ -1199,19 +1257,25 @@ function Install-Python {
         # Same winget MSI race as Install-Git / Install-NodeJS / Install-ClaudeCode:
         # `winget --silent` returns when the MSI hands off, BEFORE the Python
         # installer's PATH writes land in the registry. Probe canonical Python
-        # install dirs (per-user is the winget default; per-machine as fallback)
-        # and prepend in-process so subsequent steps can resolve python/pip in
-        # the same shell.
-        $pythonDirs = @(
-            "$env:LocalAppData\Programs\Python\Python312",
-            "$env:LocalAppData\Programs\Python\Python312\Scripts",
-            "$env:ProgramFiles\Python312",
-            "$env:ProgramFiles\Python312\Scripts"
+        # install roots for ANY Python3*X subdir (not just Python312 — when
+        # winget fails and the user falls back to a manual python.org install,
+        # they typically grab the current minor: 3.13, 3.14, 3.15...). Prepend
+        # interpreter + Scripts dirs in-process so subsequent steps resolve
+        # python/pip in this shell.
+        $pythonRoots = @(
+            "$env:LocalAppData\Programs\Python",
+            "$env:ProgramFiles",
+            "${env:ProgramFiles(x86)}"
         )
-        foreach ($probe in $pythonDirs) {
-            if ((Test-Path $probe) -and ($env:Path -split ';' -notcontains $probe)) {
-                $env:Path = "$probe;$env:Path"
-                Write-Info "Prepended '$probe' to session PATH (Python install dir)."
+        foreach ($root in $pythonRoots) {
+            if (-not $root -or -not (Test-Path $root)) { continue }
+            Get-ChildItem $root -Directory -Filter 'Python3*' -ErrorAction SilentlyContinue | ForEach-Object {
+                foreach ($sub in @($_.FullName, (Join-Path $_.FullName 'Scripts'))) {
+                    if ((Test-Path $sub) -and ($env:Path -split ';' -notcontains $sub)) {
+                        $env:Path = "$sub;$env:Path"
+                        Write-Info "Prepended '$sub' to session PATH (Python install dir)."
+                    }
+                }
             }
         }
         $current = Get-PythonVersion
@@ -1226,7 +1290,7 @@ function Install-Python {
     }
     if ($current -lt $min) {
         Write-Warn "Python $current is below minimum $min. Attempting winget upgrade..."
-        winget upgrade Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
+        [void](Invoke-Winget -Verb upgrade -PackageId 'Python.Python.3.12')
         # Tolerate non-zero exit: "no upgrade available" / "package not installed by winget"
         # are reported as failures but aren't fatal — re-check the version instead.
         $global:LASTEXITCODE = 0
@@ -1398,9 +1462,9 @@ function Install-Rust {
         return $true
     }
     Write-Info "Rust toolchain not found. Installing via winget (Rustlang.Rustup)..."
-    winget install Rustlang.Rustup --silent --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warn "winget failed to install Rust (exit $LASTEXITCODE)."
+    $rc = Invoke-Winget -Verb install -PackageId 'Rustlang.Rustup'
+    if ($rc -ne 0) {
+        Write-Warn "winget failed to install Rust (exit $rc after retries)."
         return $false
     }
     # Refresh PATH so cargo is visible without a terminal restart
