@@ -1034,48 +1034,6 @@ function Write-GlobalSettings {
     Write-Info "Secrets protection + hooks written to $settingsFile"
 }
 
-function Write-ProjectSettings {
-    $projectSettingsDir  = "$(Get-Location)\.claude"
-    $projectSettingsFile = "$projectSettingsDir\settings.json"
-    if (-not (Test-Path $projectSettingsDir)) { New-Item -ItemType Directory -Path $projectSettingsDir -Force | Out-Null }
-    if (Test-Path $projectSettingsFile) {
-        Copy-Item $projectSettingsFile "$projectSettingsFile.bak" -Force
-        Write-Warn "Backed up existing project settings.json"
-    }
-    Write-RenderedSettings -DestPath $projectSettingsFile
-    Write-Info "Project-level secrets protection + hooks written to $projectSettingsFile"
-}
-
-function Copy-ClaudeMd {
-    param([string]$Domain, [string]$ProjectType)
-    $core   = "$ScriptDir\core\CLAUDE.md"
-    $domain = "$ScriptDir\domains\$Domain\CLAUDE.md"
-    if (-not (Test-Path $core)) {
-        Write-Err "core/CLAUDE.md not found at: $core"
-        exit 1
-    }
-    if (-not (Test-Path $domain)) {
-        Write-Err "Domain CLAUDE.md not found at: $domain"
-        Write-Err "Is '$Domain' a valid domain? Valid: embedded, web, data, devops, marketing, sales, finance, service, procurement"
-        exit 1
-    }
-    $target = "$(Get-Location)\CLAUDE.md"
-    # -Encoding UTF8 on Get-Content is REQUIRED on PowerShell 5.1 (see comment
-    # in Write-GlobalClaudeMd above).
-    $coreContent   = (Get-Content $core -Raw -Encoding UTF8).TrimEnd()
-    $domainContent = (Get-Content $domain -Raw -Encoding UTF8)
-    $merged = $coreContent + "`r`n`r`n---`r`n`r`n" + $domainContent
-    if ($ProjectType -eq "existing" -and (Test-Path $target)) {
-        Write-Warn "Appending AI Sherpa rules to existing CLAUDE.md (original preserved)"
-        Add-Content $target "`n---" -Encoding UTF8
-        Add-Content $target "<!-- AI Sherpa core + $Domain rules - do not edit below this line -->" -Encoding UTF8
-        Add-Content $target $merged -Encoding UTF8
-    } else {
-        Set-Content -Path $target -Value $merged -Encoding UTF8
-    }
-    Write-Info "Merged core + $Domain CLAUDE.md installed at $target"
-}
-
 function Write-AiSherpaState {
     param([string]$Domain)
     $stateDir  = "$env:USERPROFILE\.claude"
