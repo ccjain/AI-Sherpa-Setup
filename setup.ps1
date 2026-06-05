@@ -1307,6 +1307,53 @@ function Install-Python {
         }
     }
     Write-Info "Python $current OK (>= $min)."
+    Update-Pip
+}
+
+# Self-upgrade pip after Install-Python verifies the interpreter. Modern PyPI
+# packages (e.g. fastmcp_slim, which code-review-graph depends on) ship
+# PEP 517/518 build metadata that older pip can't parse — pip install fails
+# with cryptic "no matching distribution" or wheel-build errors and the
+# Install-PyPiTool cascade gives up. Run once upfront so every downstream
+# installer (uv falling through to pip-user, hybrid WSL paths, etc.) sees a
+# current pip. Tolerates failure — pip upgrade is best-effort, not a hard gate.
+#
+# Uses `python -m pip` rather than `pip` directly because pip can't replace
+# its own .exe while running on Windows.
+function Update-Pip {
+    # Resolve-PythonInterpreter probes python3/python first and can return the
+    # MS Store stub on Windows (Test-CommandExists matches it; calling it
+    # exits 9009 with "Python was not found"). Mirror Get-PythonVersion's
+    # hardening here: prefer `py` (the Python Launcher — never collides with
+    # the stub), and validate --version output against the stub's empty/junk
+    # response before trusting a candidate.
+    $py = $null
+    foreach ($cand in @('py', 'python3', 'python')) {
+        if (-not (Test-CommandExists $cand)) { continue }
+        try {
+            $vArgs = if ($cand -eq 'py') { @('-3', '--version') } else { @('--version') }
+            $out = & $cand @vArgs 2>&1 | Out-String
+            if (Get-VersionFromString $out) { $py = $cand; break }
+        } catch {}
+    }
+    if (-not $py) { return }
+    Write-Info "Upgrading pip to latest (avoids modern-wheel install failures)..."
+    $pyArgs = if ($py -eq 'py') {
+        @('-3', '-m', 'pip', 'install', '--quiet', '--upgrade', '--user', 'pip')
+    } else {
+        @('-m', 'pip', 'install', '--quiet', '--upgrade', '--user', 'pip')
+    }
+    try {
+        & $py @pyArgs 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "pip self-upgrade exited $LASTEXITCODE — proceeding with existing pip (downstream wheel installs may still fail)."
+            $global:LASTEXITCODE = 0
+        } else {
+            Write-Info "pip is current."
+        }
+    } catch {
+        Write-Warn "pip self-upgrade threw: $($_.Exception.Message) — proceeding."
+    }
 }
 
 function Install-PyPiTool {

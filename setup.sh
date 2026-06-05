@@ -624,7 +624,34 @@ install_python() {
     return 1
   fi
   log_info "Python installed."
+  update_pip
   return 0
+}
+
+# Self-upgrade pip. Modern PyPI packages (e.g. fastmcp_slim, which
+# code-review-graph depends on) ship PEP 517/518 build metadata that older
+# pip can't parse — pip install fails with cryptic "no matching distribution"
+# or wheel-build errors and install_pypi_tool's cascade gives up. Run once
+# upfront so the pip-user fallback sees a current pip. Best-effort: warns
+# but never fails the setup (uv / pipx paths don't need this).
+_PIP_UPDATED=false
+update_pip() {
+  # Idempotent: pip self-upgrade is ~2s but pointless to repeat across
+  # multiple PyPI tool installs in the same run.
+  [[ "$_PIP_UPDATED" == "true" ]] && return 0
+  local py_cmd=""
+  if check_command python3; then py_cmd="python3"
+  elif check_command python; then py_cmd="python"
+  else return 0; fi
+  log_info "Upgrading pip to latest (avoids modern-wheel install failures)..."
+  # --user keeps the upgrade out of system site-packages (PEP 668-safe on
+  # Debian/Ubuntu where unmanaged system-wide pip writes are now blocked).
+  if "$py_cmd" -m pip install --quiet --upgrade --user pip 2>/dev/null; then
+    log_info "pip is current."
+  else
+    log_warn "pip self-upgrade failed — proceeding with existing pip (downstream wheel installs may still fail)."
+  fi
+  _PIP_UPDATED=true
 }
 
 ensure_pipx() {
@@ -796,6 +823,10 @@ install_pypi_tool() {
         "Open a new shell, then re-run setup.sh"
       return
     fi
+  else
+    # pip was already on PATH so install_python (which calls update_pip) was
+    # skipped — but the existing pip may still be too old for modern wheels.
+    update_pip
   fi
 
   local upgrade_flag=""
