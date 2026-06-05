@@ -41,10 +41,8 @@ This guide covers three install scenarios:
 
    Toolchains auto-install on demand: Python (winget/brew/apt) for PyPI tools,
    pipx on PEP 668 systems, Rust (`Rustlang.Rustup` / `rustup-init.sh`) for cargo tools.
-7. Writes secrets-protection rules to `~/.claude/settings.json` (global) and
-   `.claude/settings.json` (project-level run).
-8. Writes domain rules to `~/.claude/CLAUDE.md` (user-level run) or
-   `<project>/CLAUDE.md` (project-level run).
+7. Writes secrets-protection rules to `~/.claude/settings.json` (active for every Claude session, every project).
+8. Writes the merged core + domain rules to `~/.claude/CLAUDE.md` (active for every Claude session, every project).
 9. **Verifies** every install succeeded; if anything failed, prints a clear FAIL
    report at the end alongside the manual install command for each.
 
@@ -55,21 +53,14 @@ This guide covers three install scenarios:
 > Run from PowerShell or cmd.
 
 ```powershell
-cd C:\path\to\your-project
-C:\tools\ai-sherpa\setup.bat
-```
-
-Or, to install at the **user level** (rules apply to every project), run setup from inside the
-AI Sherpa repo:
-
-```powershell
 cd C:\tools\ai-sherpa
 .\setup.bat
 ```
 
-You'll be prompted for:
-- Domain (1–9)
-- New or existing project (only if not at user level)
+The script can also be invoked from anywhere by full path (e.g. `C:\tools\ai-sherpa\setup.bat`) — the current working directory does not affect the install. Setup writes only to `~/.claude/`.
+
+You'll be prompted for one thing only:
+- Domain (1–11)
 
 Setup runs for 2–5 minutes. Restart your terminal, then:
 
@@ -92,16 +83,11 @@ control what gets indexed.
 > cleaner to call it right.
 
 ```bash
-cd ~/path/to/your-project
-bash ~/tools/ai-sherpa/setup.sh
-```
-
-User-level install (rules apply globally):
-
-```bash
 cd ~/tools/ai-sherpa
 bash setup.sh
 ```
+
+The script can also be invoked from anywhere by full path (e.g. `bash ~/tools/ai-sherpa/setup.sh`) — the current working directory does not affect the install. Setup writes only to `~/.claude/`.
 
 After setup:
 

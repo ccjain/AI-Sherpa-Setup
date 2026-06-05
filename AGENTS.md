@@ -8,12 +8,12 @@
 
 AI Sherpa is a company-wide Claude Code configuration and distribution system. It is **not a traditional software application** — it is a collection of setup scripts, rule files, and documentation that gives every developer a pre-configured Claude Code environment with guardrails, domain-specific rules, secrets protection, and a codebase knowledge graph.
 
-When a developer runs the setup script from their project directory, the script:
+When a developer runs the setup script, the script:
 1. Installs missing prerequisites (Node.js 20+, Git, Claude Code CLI)
 2. Registers Claude Code plugin marketplaces and installs core + domain-specific plugins
-3. Writes secrets-protection deny rules to `~/.claude/settings.json` (global) and `.claude/settings.json` (project-level)
-4. Copies the selected domain's `CLAUDE.md` rules into the project root
-5. Optionally installs the Graphify Python package for codebase indexing
+3. Writes secrets-protection deny rules to `~/.claude/settings.json` (active for every Claude session)
+4. Writes the merged core + domain `CLAUDE.md` rules to `~/.claude/CLAUDE.md` (active for every Claude session)
+5. Installs the code-review-graph Python package (auto-mode via SessionStart hook)
 
 ---
 
@@ -140,7 +140,7 @@ The test script:
 
 - **Secrets protection is enforced via `settings.json` deny rules, NOT `.claudeignore`.** `.claudeignore` is confirmed unreliable for blocking file access.
 - The `settings-template.json` denies `Read` and `Write` operations on `.env`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `secrets/`, `credentials/`, `.aws/`, `.ssh/`, and `config/database.yml`.
-- Setup scripts write these rules both globally (`~/.claude/settings.json`) and project-level (`.claude/settings.json`).
+- Setup scripts write these rules globally to `~/.claude/settings.json`. The rules apply to every Claude session regardless of project.
 - The Pre-Flight Check in `core/CLAUDE.md` requires explicit developer confirmation before sending code to Anthropic's API, and scans for `NDA.md`, `CONFIDENTIAL.md`, and similar files.
 - All plugins in `plugins.json` must pass security vetting (verified publisher, 50k+ installs, open source, no undeclared network calls, no secret access). Rejected plugins are documented in `docs/requirements/`.
 - High-security projects are excluded by design — no Claude Code seat is provisioned for those teams.
