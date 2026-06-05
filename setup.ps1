@@ -1736,7 +1736,11 @@ function Initialize-Rtk {
     try {
         $oldEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
         try {
-            & rtk init -g --auto-patch 2>$tmpErr | Out-Host
+            # Pipe empty stdin so any prompt rtk init prints (e.g. final
+            # "Restart Claude Code" acknowledgment on first-time patch) EOFs
+            # instantly instead of blocking setup waiting for the user to hit
+            # Enter. --auto-patch only suppresses the settings.json patch prompt.
+            '' | & rtk init -g --auto-patch 2>$tmpErr | Out-Host
             $rc = $LASTEXITCODE
         } finally { $ErrorActionPreference = $oldEAP }
         $stderr = Get-Content $tmpErr -Raw -ErrorAction SilentlyContinue
