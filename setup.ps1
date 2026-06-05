@@ -2099,10 +2099,6 @@ if ($Uninstall) {
 }
 
 
-# Detect whether this is a user-level (double-click) or project-level run
-$currentPath = (Get-Location).Path
-$isUserLevelRun = ((Test-Path "$currentPath\core\CLAUDE.md") -and ($currentPath -eq $ScriptDir))
-
 $domainMap = @{
     "1"="embedded"; "2"="web"; "3"="data"; "4"="devops";
     "5"="marketing"; "6"="sales"; "7"="finance"; "8"="service"; "9"="procurement";
@@ -2229,56 +2225,22 @@ if ($domain -eq "embedded") {
     }
 }
 
-if ($isUserLevelRun) {
-    # User-level: write CLAUDE.md to ~/.claude/ — active for all projects
-    Write-GlobalClaudeMd $domain
-    Enable-WindowsLongPaths
-    Install-Tools -Domain $domain -Upgrade:$isReinstall
-    Initialize-Rtk
-    Write-AiSherpaState -Domain $domain
-    $missing = Test-Installation $domain
-    if ($missing.Count -gt 0) {
-        Show-VerificationReport $missing
-        Show-SkippedStepsReport
-        Show-UserActionsReport
-        Print-Summary $domain -UserLevel
-        exit 1
-    }
-    Write-Info "All expected plugins verified in installed_plugins.json."
+# Global install: write CLAUDE.md to ~/.claude/ — active for all projects
+Write-GlobalClaudeMd $domain
+Enable-WindowsLongPaths
+Install-Tools -Domain $domain -Upgrade:$isReinstall
+Initialize-Rtk
+Write-AiSherpaState -Domain $domain
+$missing = Test-Installation $domain
+if ($missing.Count -gt 0) {
+    Show-VerificationReport $missing
     Show-SkippedStepsReport
     Show-UserActionsReport
     Print-Summary $domain -UserLevel
-} else {
-    # Project-level: write CLAUDE.md and settings into current project directory
-    Write-Host ""
-    Write-Host "New project or existing project?"
-    Write-Host "  [1] New project"
-    Write-Host "  [2] Existing project (CLAUDE.md will be appended, not replaced)"
-    Write-Host ""
-    $projectChoice = Read-Host "Enter number [1-2]"
-    $ptMap = @{ "1"="new"; "2"="existing" }
-    if (-not $ptMap.ContainsKey($projectChoice)) {
-        Write-Err "Invalid choice: $projectChoice. Run setup.bat again."
-        exit 1
-    }
-    $projectType = $ptMap[$projectChoice]
-    Write-ProjectSettings
-    Copy-ClaudeMd $domain $projectType
-    Enable-WindowsLongPaths
-    Install-Tools -Domain $domain -Upgrade:$isReinstall
-    Initialize-Rtk
-    Write-AiSherpaState -Domain $domain
-    $missing = Test-Installation $domain
-    if ($missing.Count -gt 0) {
-        Show-VerificationReport $missing
-        Show-SkippedStepsReport
-        Show-UserActionsReport
-        Print-Summary $domain
-        exit 1
-    }
-    Write-Info "All expected plugins verified in installed_plugins.json."
-    Show-SkippedStepsReport
-    Show-UserActionsReport
-    Print-Summary $domain
+    exit 1
 }
+Write-Info "All expected plugins verified in installed_plugins.json."
+Show-SkippedStepsReport
+Show-UserActionsReport
+Print-Summary $domain -UserLevel
 } # end: if (-not $script:SourcedAsLibrary)
