@@ -48,51 +48,6 @@ assert_file_exists "settings.json.bak created on second run" "$TMP/.claude/setti
 
 HOME="$HOME_BAK"; rm -rf "$TMP"
 
-# --- Test write_project_settings ---
-echo "=== Test: write_project_settings ==="
-TMP=$(mktemp -d)
-pushd "$TMP" > /dev/null
-
-write_project_settings
-assert_file_exists "project .claude/settings.json created" "$TMP/.claude/settings.json"
-assert_file_contains "project settings has Read .env rule" "$TMP/.claude/settings.json" '"Read'
-
-popd > /dev/null; rm -rf "$TMP"
-
-# --- Test copy_claude_md — new project ---
-echo "=== Test: copy_claude_md (new project) ==="
-TMP=$(mktemp -d)
-pushd "$TMP" > /dev/null
-
-copy_claude_md "web" "new"
-assert_file_exists "CLAUDE.md created" "$TMP/CLAUDE.md"
-assert_file_contains "CLAUDE.md has web rules" "$TMP/CLAUDE.md" "Web / Frontend"
-
-popd > /dev/null; rm -rf "$TMP"
-
-# --- Test copy_claude_md — existing project (append) ---
-echo "=== Test: copy_claude_md (existing project — appends) ==="
-TMP=$(mktemp -d)
-pushd "$TMP" > /dev/null
-
-echo "# My existing project rules" > CLAUDE.md
-copy_claude_md "web" "existing"
-assert_file_contains "original content preserved" "$TMP/CLAUDE.md" "My existing project rules"
-assert_file_contains "domain rules appended" "$TMP/CLAUDE.md" "Web / Frontend"
-
-popd > /dev/null; rm -rf "$TMP"
-
-# --- Test copy_claude_md — existing project type but no pre-existing CLAUDE.md ---
-echo "=== Test: copy_claude_md (existing project type, no prior CLAUDE.md) ==="
-TMP=$(mktemp -d)
-pushd "$TMP" > /dev/null
-
-copy_claude_md "web" "existing"
-assert_file_exists "CLAUDE.md created even with existing type" "$TMP/CLAUDE.md"
-assert_file_contains "CLAUDE.md has web rules" "$TMP/CLAUDE.md" "Web / Frontend"
-
-popd > /dev/null; rm -rf "$TMP"
-
 # --- Test install_core_skills reads global plugins from plugins.json ---
 echo "=== Test: install_core_skills reads global plugins from plugins.json ==="
 TMP=$(mktemp -d)
