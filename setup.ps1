@@ -2163,16 +2163,23 @@ $domain = $domainMap[$domainChoice]
 #>
 if ($isReinstall) {
     if ($savedDomain -eq $domain) {
-        Write-Info "AI Sherpa already installed for domain '$domain'. Re-running:"
+        # Plugin/skill installs are domain-agnostic — every marketplace and
+        # every domain's plugins are installed regardless of $domain. $domain
+        # still gates CLAUDE.md domain rules + embedded toolchain detection,
+        # so surface it as the "active" domain, not as an install gate.
+        Write-Info "AI Sherpa already installed (active domain: '$domain'). Re-running:"
         Write-Info "  - existing plugins will be UPDATED to latest"
         Write-Info "  - any new entries in plugins.json will be installed fresh"
         Write-Info "  - CLI tools will be upgraded"
     } else {
-        Write-Info "AI Sherpa already installed for domain '$savedDomain'. Switching to '$domain'."
+        # Unreachable while the interactive domain prompt is commented out
+        # ($domain = $savedDomain at line ~2134). Kept for when the prompt
+        # is re-enabled — see the TODO above.
+        Write-Info "AI Sherpa already installed (active domain: '$savedDomain'). Switching active domain to '$domain'."
         Invoke-DomainSwitch -OldDomain $savedDomain -NewDomain $domain
     }
 } else {
-    Write-Info "AI Sherpa not installed yet — running fresh install for domain '$domain'."
+    Write-Info "AI Sherpa not installed yet — running fresh install (all plugins and skills for every domain). Active domain defaults to '$domain'."
 }
 
 # Register every declared marketplace + install plugins & skills for EVERY
