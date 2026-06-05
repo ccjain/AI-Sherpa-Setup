@@ -48,6 +48,15 @@ assert_file_exists "settings.json.bak created on second run" "$TMP/.claude/setti
 
 HOME="$HOME_BAK"; rm -rf "$TMP"
 
+# --- Test: project-level helpers are gone (regression guard) ---
+echo "=== Test: project-level helpers are not defined ==="
+declare -F write_project_settings > /dev/null \
+  && fail "write_project_settings should not be defined" "no function" "function exists" \
+  || ok "write_project_settings is not defined"
+declare -F copy_claude_md > /dev/null \
+  && fail "copy_claude_md should not be defined" "no function" "function exists" \
+  || ok "copy_claude_md is not defined"
+
 # --- Test install_core_skills reads global plugins from plugins.json ---
 echo "=== Test: install_core_skills reads global plugins from plugins.json ==="
 TMP=$(mktemp -d)

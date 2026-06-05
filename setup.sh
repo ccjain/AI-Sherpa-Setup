@@ -183,50 +183,6 @@ write_settings() {
   log_info "Secrets protection + hooks written to $settings_file"
 }
 
-write_project_settings() {
-  local project_settings_dir="$PWD/.claude"
-  local project_settings_file="$project_settings_dir/settings.json"
-  mkdir -p "$project_settings_dir"
-  if [[ -f "$project_settings_file" ]]; then
-    cp "$project_settings_file" "${project_settings_file}.bak"
-    log_warn "Backed up existing project settings.json"
-  fi
-  write_rendered_settings "$project_settings_file"
-  log_info "Project-level secrets protection + hooks written to $project_settings_file"
-}
-
-copy_claude_md() {
-  local domain="$1" project_type="$2"
-  local core_md="$SCRIPT_DIR/core/CLAUDE.md"
-  local domain_md="$SCRIPT_DIR/domains/$domain/CLAUDE.md"
-  if [[ ! -f "$core_md" ]]; then
-    log_error "core/CLAUDE.md not found at: $core_md"
-    exit 1
-  fi
-  if [[ ! -f "$domain_md" ]]; then
-    log_error "Domain CLAUDE.md not found at: $domain_md"
-    exit 1
-  fi
-  local target="$PWD/CLAUDE.md"
-  if [[ "$project_type" == "existing" && -f "$target" ]]; then
-    log_warn "Appending AI Sherpa rules to existing CLAUDE.md (original preserved)"
-    {
-      printf '\n---\n'
-      echo "<!-- AI Sherpa core + $domain rules — do not edit below this line -->"
-      cat "$core_md"
-      printf '\n\n---\n\n'
-      cat "$domain_md"
-    } >> "$target"
-  else
-    {
-      cat "$core_md"
-      printf '\n\n---\n\n'
-      cat "$domain_md"
-    } > "$target"
-  fi
-  log_info "Merged core + $domain CLAUDE.md installed at $target"
-}
-
 write_ai_sherpa_state() {
   local domain="$1"
   local state_dir="$EFFECTIVE_HOME/.claude"
