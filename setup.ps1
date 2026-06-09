@@ -1052,7 +1052,9 @@ function Install-Hooks {
     if (-not (Test-Path $hooksDir)) { New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null }
     $srcHooks = "$ScriptDir\hooks"
     if (Test-Path $srcHooks) {
+        # .js = hook scripts, .sh = status line script (statusline-command.sh)
         Copy-Item "$srcHooks\*.js" $hooksDir -Force -ErrorAction SilentlyContinue
+        Copy-Item "$srcHooks\*.sh" $hooksDir -Force -ErrorAction SilentlyContinue
         Write-Info "Hooks installed to $hooksDir"
     }
     return ($hooksDir -replace '\\', '/')
@@ -1068,6 +1070,30 @@ function Write-RenderedSettings {
     [System.IO.File]::WriteAllText($DestPath, $rendered, (New-Object System.Text.UTF8Encoding($false)))
 }
 
+# Deep-merges two ConvertFrom-Json object graphs. Overlay (the rendered
+# template) wins wherever both define the same key: nested objects merge
+# recursively, while arrays and scalars are REPLACED by Overlay's value so
+# stale template-managed hook entries can't accumulate across upgrades.
+# Keys present only in Base (user-owned: model, enabledPlugins, rtk's
+# PreToolUse patch, ...) pass through untouched. This is what makes setup
+# re-runs non-destructive for per-user customizations.
+function Merge-JsonObjects {
+    param($Base, $Overlay)
+    $merged = [ordered]@{}
+    foreach ($prop in $Base.PSObject.Properties)    { $merged[$prop.Name] = $prop.Value }
+    foreach ($prop in $Overlay.PSObject.Properties) {
+        $name = $prop.Name
+        if ($merged.Contains($name) -and
+            $merged[$name] -is [System.Management.Automation.PSCustomObject] -and
+            $prop.Value   -is [System.Management.Automation.PSCustomObject]) {
+            $merged[$name] = Merge-JsonObjects -Base $merged[$name] -Overlay $prop.Value
+        } else {
+            $merged[$name] = $prop.Value
+        }
+    }
+    return [PSCustomObject]$merged
+}
+
 function Write-GlobalSettings {
     $settingsDir  = "$env:USERPROFILE\.claude"
     $settingsFile = "$settingsDir\settings.json"
@@ -1075,6 +1101,23 @@ function Write-GlobalSettings {
     if (Test-Path $settingsFile) {
         Copy-Item $settingsFile "$settingsFile.bak" -Force
         Write-Warn "Backed up existing global settings.json to settings.json.bak"
+        # Merge path: enforce template-managed keys while preserving everything
+        # the user (or other tools like rtk / `claude config`) added locally.
+        $existing = $null
+        try { $existing = Get-Content $settingsFile -Raw -ErrorAction Stop | ConvertFrom-Json } catch {}
+        if ($null -ne $existing) {
+            $hooksDir = Install-Hooks
+            $template = Get-Content "$ScriptDir\settings\settings-template.json" -Raw
+            $rendered = $template.Replace('__CLAUDE_HOOKS_DIR__', $hooksDir)
+            $merged   = Merge-JsonObjects -Base $existing -Overlay ($rendered | ConvertFrom-Json)
+            # Depth 10 because settings.json#hooks contains nested arrays-of-
+            # objects (same reasoning as Set-AllInstalledPluginsEnabled).
+            $json = ConvertTo-Json -InputObject $merged -Depth 10
+            [System.IO.File]::WriteAllText($settingsFile, $json, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Info "AI Sherpa settings merged into $settingsFile (user keys preserved, template keys enforced)"
+            return
+        }
+        Write-Warn "Existing settings.json is not valid JSON -- rewriting from template (original kept as settings.json.bak)."
     }
     Write-RenderedSettings -DestPath $settingsFile
     Write-Info "Secrets protection + hooks written to $settingsFile"
@@ -2031,8 +2074,10 @@ function Invoke-Update {
     Install-McpServers -Domain $savedDomain
 
     Write-GlobalSettings
-    # Same ordering as the main install flow — must run AFTER
-    # Write-GlobalSettings so the template overwrite doesn't clobber it.
+    # Same ordering as the main install flow — runs AFTER Write-GlobalSettings.
+    # (With the merge-based Write-GlobalSettings, enabledPlugins survives the
+    # settings write anyway; the ordering is kept as defense in depth and for
+    # the fallback path where a corrupt settings.json is rewritten from template.)
     Set-AllInstalledPluginsEnabled
     Write-Info "Update complete. Plugins, skills, and tools refreshed to latest$(if ($savedDomain) { " for domain '$savedDomain'" })."
     Write-Info "Project CLAUDE.md was NOT modified."
@@ -2356,8 +2401,10 @@ if ($pluginsCfg -and $pluginsCfg.domains) {
     Install-Skills -Domain $domain
 }
 Write-GlobalSettings
-# Must run AFTER Write-GlobalSettings (which overwrites settings.json from the
-# template). See Set-AllInstalledPluginsEnabled docstring + claude-code#20661.
+# Runs AFTER Write-GlobalSettings. With the merge-based settings write,
+# enabledPlugins survives anyway; ordering kept as defense in depth and for
+# the corrupt-settings fallback (template rewrite). See
+# Set-AllInstalledPluginsEnabled docstring + claude-code#20661.
 Set-AllInstalledPluginsEnabled
 
 # Embedded-specific: probe for toolchains, flashers, debuggers and record them

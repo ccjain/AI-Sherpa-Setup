@@ -16,6 +16,10 @@
       "Write(**/.env.*)"
     ]
   },
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"__CLAUDE_HOOKS_DIR__/statusline-command.sh\""
+  },
   "hooks": {
     "SessionStart": [
       {
