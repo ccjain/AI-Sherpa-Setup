@@ -33,10 +33,7 @@ from two files in this order — per-project override first, global fallback sec
    user-entered fallbacks. In WSL+Windows hybrid, this lives at the Windows
    user's `.claude\embedded-toolchain.json`.
 
-**Merge rule:** for any tool key, if the per-project file has a non-null value,
-use it. Otherwise fall back to the global file's value. If both are null/missing,
-ask the developer for the path and update the appropriate file (per-project for
-repo-specific tooling, global for machine-wide installs).
+
 
 ### Schema (same for both files)
 
@@ -78,24 +75,6 @@ A project that requires an older Zephyr SDK pinned for compatibility:
 
 Everything else falls back to the global config.
 
-### How to use it
-
-Prefer the absolute path over a bare command name. Avoids PATH surprises
-across shells.
-
-| Developer asks | What to look up |
-|---|---|
-| "Build this Zephyr app for nrf5340dk" | `toolchains.zephyr-sdk` + `toolchains.arm-gcc` |
-| "Flash this .hex to my STM32H7 dev board" | `flashers.stm32cubeprog` or `flashers.jlink` |
-| "Start a GDB debug session" | `debuggers.arm-gdb` + `debuggers.jlink-gdbserver` |
-| "Run pyocd to list connected probes" | `flashers.pyocd` |
-
-Example commands you'd issue with the JSON resolved:
-
-```
-& "C:\Program Files\STMicroelectronics\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD -d build/firmware.hex -v -rst
-& "C:\zephyr-sdk-0.16.1\openocd\bin\openocd.exe" -f boards/arm/nrf5340dk_nrf5340/support/nrf5340_cpuapp.cfg
-```
 
 ### If a needed tool is null in both files
 
@@ -109,39 +88,6 @@ Ask the developer for its install path, then:
 
 The developer hasn't run AI Sherpa setup for embedded. Tell them to run
 `setup.bat` or `bash setup.sh` from the AI Sherpa repo and pick domain `1`.
-
----
-
-## Hardware-Critical Code — Human Approval Required
-
-Flag ANY suggestion that touches the following with: `⚠ HUMAN REVIEW REQUIRED — hardware-critical change`
-
-Do not proceed until the developer explicitly approves:
-- Interrupt service routines (ISRs)
-- Memory-mapped hardware register access
-- Real-time scheduling or timing logic
-- Boot/startup code
-- Safety-critical control loops
-- DMA configuration
-- Power management sequences
-
----
-
-## Always Do (Embedded)
-
-1. Annotate ISRs with their timing constraints and expected execution time
-2. Prefer iterative over recursive — always consider stack depth impact
-3. Reference the project's datasheet or HAL before suggesting register access
-4. State explicitly: "This suggestion requires hardware-in-the-loop testing to verify"
-
----
-
-## Never Do (Embedded)
-
-1. Use dynamic memory allocation (malloc/free) unless developer explicitly approves
-2. Suggest hardware register access without a datasheet/HAL reference
-3. Claim code correctness without hardware-in-the-loop testing
-4. Apply MISRA-C suggestions to non-safety-critical modules without asking first
 
 ---
 

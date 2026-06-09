@@ -209,14 +209,6 @@ below override any defaults from their `SKILL.md` descriptions.
 | asks to write tests for new code                        | `superpowers:test-driven-development`   | Test-first standard                  |
 | asks for code review on current branch or a PR          | `superpowers:requesting-code-review`    | Mandatory pre-merge                  |
 
-> The brainstorming row above is **also enforced automatically** by a
-> `UserPromptSubmit` hook (`~/.claude/hooks/brainstorm-reminder.js`,
-> shipped via setup). The hook detects feature/build-intent prompts and
-> injects a reminder so this row fires reliably without the model having
-> to notice on its own. Read-only questions, debugging, and trivial
-> edits are deliberately skipped. To tune the patterns, edit
-> `hooks/brainstorm-reminder.js` in this repo and re-run setup.
-
 ### Self-described — auto-fires for its listed use cases, no override needed
 
 - `superpowers` — workflow skills (brainstorming, writing-plans, executing-plans, verification-before-completion, ...); the MANDATORY rules above cover the cases where this project has an opinion.
