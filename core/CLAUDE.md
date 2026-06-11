@@ -209,6 +209,8 @@ below override any defaults from their `SKILL.md` descriptions.
 | asks to write tests for new code                        | `superpowers:test-driven-development`   | Test-first standard                  |
 | asks for code review on current branch or a PR          | `superpowers:requesting-code-review`    | Mandatory pre-merge                  |
 
+> **Domain-specific contracts** live in `ai-sherpa-<domain>` skills installed under `~/.claude/skills/`. Each fires when a task matches its domain (e.g. `ai-sherpa-embedded` for Zephyr/firmware tasks). Domain MANDATORY tables, Always-Do / Never-Do rules, and toolchain lookups are inside those skill bodies, not in this file.
+
 ### Self-described — auto-fires for its listed use cases, no override needed
 
 - `superpowers` — workflow skills (brainstorming, writing-plans, executing-plans, verification-before-completion, ...); the MANDATORY rules above cover the cases where this project has an opinion.
