@@ -2189,8 +2189,7 @@ function Invoke-Uninstall {
     }
 
     # 3b. Remove AI Sherpa domain skills (ai-sherpa-*/)
-    Write-Info "Removing AI Sherpa domain skills from $env:USERPROFILE\.claude\skills\..."
-    $skillsDir = "$env:USERPROFILE\.claude\skills"
+    Write-Info "Removing AI Sherpa domain skills from $skillsDir..."
     if (Test-Path $skillsDir) {
         Get-ChildItem $skillsDir -Directory -Filter "ai-sherpa-*" -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Info "  - $($_.Name)"
@@ -2255,7 +2254,7 @@ function Install-AISherpaSkills {
         try {
             $cfg = Get-Content $configFile -Raw | ConvertFrom-Json
             if ($cfg.disabled_domains) { $disabled = @($cfg.disabled_domains) }
-        } catch {}
+        } catch { Write-Warn "Could not parse plugins.json — all domains will be installed: $_" }
     }
 
     $domainsRoot = "$ScriptDir\domains"
