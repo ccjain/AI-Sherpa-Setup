@@ -208,15 +208,9 @@ try{const c=JSON.parse(require('fs').readFileSync('$state_file','utf8'));if(c.do
 }
 
 write_global_claude_md() {
-  local domain="$1"
   local core_md="$SCRIPT_DIR/core/CLAUDE.md"
-  local domain_md="$SCRIPT_DIR/domains/$domain/CLAUDE.md"
   if [[ ! -f "$core_md" ]]; then
     log_error "core/CLAUDE.md not found at: $core_md"
-    exit 1
-  fi
-  if [[ ! -f "$domain_md" ]]; then
-    log_error "Domain CLAUDE.md not found at: $domain_md"
     exit 1
   fi
   local claude_dir="$EFFECTIVE_HOME/.claude"
@@ -226,14 +220,10 @@ write_global_claude_md() {
     cp "$target" "${target}.bak"
     log_warn "Backed up existing $target to $target.bak"
   fi
-  # Merge: core (universal) first, then the chosen domain's rules.
-  # Universal guidance reads first; domain refines on top.
-  {
-    cat "$core_md"
-    printf '\n\n---\n\n'
-    cat "$domain_md"
-  } > "$target"
-  log_info "Merged core + $domain rules written to $target ($(wc -l < "$target") lines)"
+  # Global rules only. Domain-specific rules live in ai-sherpa-<domain> skills
+  # under ~/.claude/skills/ and load progressively when their description matches.
+  cp "$core_md" "$target"
+  log_info "core rules written to $target ($(wc -l < "$target") lines)"
 }
 
 # Parse plugins.json for a given section ("global" or domain name).
@@ -531,6 +521,49 @@ install_skills() {
     rm -rf "$tmp"
     log_info "Installed skills from $repo into $skills_dir"
   done <<< "$entries"
+}
+
+# Copy each domains/<name>/SKILL.md from the repo into
+# ~/.claude/skills/ai-sherpa-<name>/SKILL.md. Skips domains listed in
+# plugins.json.disabled_domains. Idempotent; overwrites on re-run.
+install_ai_sherpa_skills() {
+  local config_file="$SCRIPT_DIR/plugins.json"
+  local skills_dir="$EFFECTIVE_HOME/.claude/skills"
+  mkdir -p "$skills_dir"
+
+  # Read disabled_domains from plugins.json
+  local disabled
+  if [[ -f "$config_file" ]]; then
+    disabled=$(node -e "
+let raw='';process.stdin.setEncoding('utf8');
+process.stdin.on('data',d=>raw+=d);
+process.stdin.on('end',()=>{
+  try{const c=JSON.parse(raw);(c.disabled_domains||[]).forEach(n=>process.stdout.write(n+'\n'))}catch(e){}
+});
+" < "$config_file")
+  fi
+
+  local installed=0
+  for dir in "$SCRIPT_DIR/domains"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name
+    name=$(basename "$dir")
+    # Skip disabled domains
+    if echo "$disabled" | grep -qxF "$name"; then
+      log_info "  [SKIP]   ai-sherpa-$name (disabled_domains)"
+      continue
+    fi
+    local src="$dir/SKILL.md"
+    if [[ ! -f "$src" ]]; then
+      continue
+    fi
+    local target_dir="$skills_dir/ai-sherpa-$name"
+    mkdir -p "$target_dir"
+    cp -f "$src" "$target_dir/SKILL.md"
+    log_info "  [READY]  ai-sherpa-$name installed to $target_dir/SKILL.md"
+    installed=$((installed + 1))
+  done
+  log_info "AI Sherpa domain skills installed ($installed total) under $skills_dir"
 }
 
 print_summary() {
@@ -1409,12 +1442,14 @@ run_update() {
 
   # Re-clone raw skills (clone overwrites)
   install_skills "$saved_domain"
+  install_ai_sherpa_skills
 
   # Upgrade tools: pip --upgrade / cargo --force / git pull
   install_tools "$saved_domain" "true"
   install_mcp_servers "$saved_domain"
 
   write_settings
+  write_global_claude_md
   log_info "Update complete. Plugins, skills, and tools refreshed to latest${saved_domain:+ for domain '$saved_domain'}."
   log_info "Project CLAUDE.md was NOT modified."
 }
@@ -1525,6 +1560,16 @@ try{
     fi
     rm -rf "$tmp"
   done
+
+  # 3b. Remove AI Sherpa domain skills
+  log_info "Removing AI Sherpa domain skills from $skills_dir..."
+  if [[ -d "$skills_dir" ]]; then
+    for d in "$skills_dir"/ai-sherpa-*; do
+      [[ -d "$d" ]] || continue
+      log_info "  - $(basename "$d")"
+      rm -rf "$d"
+    done
+  fi
 
   # 4. Remove AI Sherpa state file (the saved-domain marker)
   local state_file="$EFFECTIVE_HOME/.claude/.ai-sherpa-state.json"
@@ -1702,8 +1747,9 @@ main() {
   install_core_skills
   install_domain_skills "$domain"
   install_skills "$domain"
+  install_ai_sherpa_skills
   write_settings
-  write_global_claude_md "$domain"
+  write_global_claude_md
   install_tools "$domain"
   install_mcp_servers "$domain"
   write_ai_sherpa_state "$domain"
