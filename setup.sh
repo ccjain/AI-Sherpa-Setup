@@ -1404,7 +1404,7 @@ run_update() {
   # Recall which domain was picked at install time (state file written by
   # write_ai_sherpa_state). If not present, fall back to global-only refresh.
   local saved_domain
-  saved_domain=$(get_ai_sherpa_domain)
+  saved_domain=$(get_ai_sherpa_domain) || true
   if [[ -n "$saved_domain" ]]; then
     log_info "Recalled domain '$saved_domain' from previous install."
   else

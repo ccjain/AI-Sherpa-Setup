@@ -158,21 +158,27 @@ mkdir -p "$TMP/settings"
 cat > "$TMP/settings/settings-template.json" << 'EOF'
 { "permissions": {} }
 EOF
+# Provide a core/CLAUDE.md stub so write_global_claude_md does not exit 1
+mkdir -p "$TMP/core"
+echo "# stub" > "$TMP/core/CLAUDE.md"
 HOME_BAK="$HOME"; HOME="$TMP"
+EFFECTIVE_HOME_BAK="$EFFECTIVE_HOME"; EFFECTIVE_HOME="$TMP"
 SCRIPT_DIR_BAK="$SCRIPT_DIR"; SCRIPT_DIR="$TMP"
+mkdir -p "$TMP/.claude"
 claude() { echo "claude $*" >> "$MOCK_LOG"; }
 export -f claude
 run_update
 assert_file_contains "run_update calls plugin update" "$MOCK_LOG" \
   "plugin update superpowers"
-HOME="$HOME_BAK"; SCRIPT_DIR="$SCRIPT_DIR_BAK"; unset -f claude; rm -rf "$TMP"
+HOME="$HOME_BAK"; EFFECTIVE_HOME="$EFFECTIVE_HOME_BAK"; SCRIPT_DIR="$SCRIPT_DIR_BAK"; unset -f claude; rm -rf "$TMP"
 
 
-# --- Test: write_global_claude_md merges core + chosen domain ---
-echo "=== Test: write_global_claude_md merges core + chosen domain ==="
+# --- Test: write_global_claude_md writes core only (no domain concat) ---
+echo "=== Test: write_global_claude_md writes core only ==="
 TMP=$(mktemp -d)
 mkdir -p "$TMP/core" "$TMP/domains/embedded"
 echo "__CORE_SENTINEL__"   > "$TMP/core/CLAUDE.md"
+# Old-style domain CLAUDE.md is irrelevant now; create one to prove it's NOT read.
 echo "__DOMAIN_SENTINEL__" > "$TMP/domains/embedded/CLAUDE.md"
 SCRIPT_DIR_BAK="$SCRIPT_DIR"
 EFFECTIVE_HOME_BAK="$EFFECTIVE_HOME"
@@ -182,16 +188,26 @@ HOME="$TMP/home"
 EFFECTIVE_HOME="$TMP/home"
 mkdir -p "$EFFECTIVE_HOME/.claude"
 
-write_global_claude_md embedded
+write_global_claude_md
 
 merged="$EFFECTIVE_HOME/.claude/CLAUDE.md"
-assert_file_exists "merged CLAUDE.md written" "$merged"
-assert_file_contains "merged file contains core sentinel"   "$merged" "__CORE_SENTINEL__"
-assert_file_contains "merged file contains domain sentinel" "$merged" "__DOMAIN_SENTINEL__"
-assert_file_contains "merged file contains --- separator"   "$merged" "^---\$"
+assert_file_exists "CLAUDE.md written" "$merged"
+assert_file_contains "CLAUDE.md contains core sentinel" "$merged" "__CORE_SENTINEL__"
+# Negative assertion: no domain content should appear.
+if grep -q "__DOMAIN_SENTINEL__" "$merged"; then
+  fail "CLAUDE.md does NOT contain domain sentinel" "no domain content" "domain sentinel present"
+else
+  ok "CLAUDE.md does NOT contain domain sentinel"
+fi
+# Negative assertion: no '---' separator (former merge marker) at start of a line.
+if grep -qE '^---$' "$merged"; then
+  fail "CLAUDE.md does NOT contain '---' separator" "no '---' line" "found '---' line"
+else
+  ok "CLAUDE.md does NOT contain '---' separator"
+fi
 
 # Re-run with a pre-existing target → backup must be created
-write_global_claude_md embedded
+write_global_claude_md
 assert_file_exists ".bak created on re-run" "${merged}.bak"
 
 SCRIPT_DIR="$SCRIPT_DIR_BAK"
@@ -464,7 +480,65 @@ else fail "CASE H: [READY] log line emitted" "[READY] rtk in log" "not found"
 fi
 
 rm -rf "$dest_dir"
-unset -f check_command curl log_info log_action add_user_action
+unset -f check_command curl log_action add_user_action
+# Restore log_info to its original definition (was overridden for capture above)
+log_info() { echo -e "${GREEN}[AI Sherpa]${NC} $1"; }
+
+# --- Test: install_ai_sherpa_skills copies all non-disabled domain SKILL.md ---
+echo "=== Test: install_ai_sherpa_skills copies all non-disabled domain SKILL.md ==="
+TMP=$(mktemp -d)
+mkdir -p "$TMP/domains/embedded" "$TMP/domains/web" "$TMP/domains/marketing"
+cat > "$TMP/domains/embedded/SKILL.md" << 'EOF'
+---
+name: ai-sherpa-embedded
+description: test
+---
+embedded body
+EOF
+cat > "$TMP/domains/web/SKILL.md" << 'EOF'
+---
+name: ai-sherpa-web
+description: test
+---
+web body
+EOF
+cat > "$TMP/domains/marketing/SKILL.md" << 'EOF'
+---
+name: ai-sherpa-marketing
+description: test (should be skipped)
+---
+marketing body
+EOF
+cat > "$TMP/plugins.json" << 'EOF'
+{
+  "disabled_domains": ["marketing"],
+  "global": [], "domains": {}, "tools": {}, "skills": {}
+}
+EOF
+SCRIPT_DIR_BAK="$SCRIPT_DIR"
+EFFECTIVE_HOME_BAK="$EFFECTIVE_HOME"
+HOME_BAK="$HOME"
+SCRIPT_DIR="$TMP"
+HOME="$TMP/home"
+EFFECTIVE_HOME="$TMP/home"
+mkdir -p "$EFFECTIVE_HOME/.claude"
+
+install_ai_sherpa_skills
+
+skills_dir="$EFFECTIVE_HOME/.claude/skills"
+assert_file_exists "ai-sherpa-embedded SKILL.md installed" "$skills_dir/ai-sherpa-embedded/SKILL.md"
+assert_file_exists "ai-sherpa-web SKILL.md installed"      "$skills_dir/ai-sherpa-web/SKILL.md"
+assert_no_file    "ai-sherpa-marketing SKIPPED (disabled)" "$skills_dir/ai-sherpa-marketing/SKILL.md"
+assert_file_contains "ai-sherpa-embedded preserves body" "$skills_dir/ai-sherpa-embedded/SKILL.md" "embedded body"
+
+# Re-run is idempotent: no error, files still present.
+install_ai_sherpa_skills
+assert_file_exists "ai-sherpa-embedded still present after re-run" "$skills_dir/ai-sherpa-embedded/SKILL.md"
+
+SCRIPT_DIR="$SCRIPT_DIR_BAK"
+EFFECTIVE_HOME="$EFFECTIVE_HOME_BAK"
+HOME="$HOME_BAK"
+rm -rf "$TMP"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
