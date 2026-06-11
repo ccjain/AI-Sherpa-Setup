@@ -1,9 +1,11 @@
+---
+name: ai-sherpa-embedded
+description: Use when working on any embedded / firmware / RTOS task — C, C++, Zephyr, FreeRTOS, bare-metal, MCU, microcontroller, board bringup, devicetree, Kconfig, GPIO, sensor, BLE, CAN, USB, flashing, JLink, OpenOCD, MISRA, hardware, peripheral, interrupt. Provides toolchain lookup, hardware constraints, and embedded-specific patterns.
+---
+
 # AI Sherpa — Embedded Software Rules
 
-These rules apply to all embedded software projects (C/C++, firmware, RTOS).
-They extend the global rules in core/CLAUDE.md — do not remove global rules.
-
----
+These rules apply in addition to the global guidelines in `core/CLAUDE.md`.
 
 ## Architecture Check (Before Every Embedded Task)
 
