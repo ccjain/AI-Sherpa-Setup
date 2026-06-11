@@ -43,17 +43,19 @@ There is **no** `package.json`, `pyproject.toml`, `Cargo.toml`, `Makefile`, or s
 │   ├── CLAUDE.md            ← Global rules for ALL domains (~171 lines)
 │   └── CLAUDE_old.md        ← Previous iteration of global rules (reference only)
 ├── domains/
-│   ├── backend/CLAUDE.md    ← Backend (Node.js / Python) rules
-│   ├── data/CLAUDE.md       ← Data Science / ML rules
-│   ├── devops/CLAUDE.md     ← DevOps / Platform rules
-│   ├── embedded/CLAUDE.md   ← Embedded (C/C++, firmware, RTOS) rules
-│   ├── finance/CLAUDE.md    ← Finance / Accounting rules
-│   ├── marketing/CLAUDE.md  ← Marketing rules
-│   ├── procurement/CLAUDE.md← Procurement / Supply-chain rules
-│   ├── sales/CLAUDE.md      ← Sales rules
-│   ├── service/CLAUDE.md    ← Customer Service / Support rules
-│   ├── uiux/CLAUDE.md       ← UI/UX Design rules
-│   └── web/CLAUDE.md        ← Web / Frontend rules
+│   ├── ai/SKILL.md          ← AI / LLM agent rules (loads as ai-sherpa-ai skill)
+│   ├── backend/SKILL.md     ← Backend rules (loads as ai-sherpa-backend skill)
+│   ├── data/SKILL.md        ← Data engineering rules (loads as ai-sherpa-data skill)
+│   ├── devops/SKILL.md      ← DevOps rules (loads as ai-sherpa-devops skill)
+│   ├── embedded/SKILL.md    ← Embedded rules (loads as ai-sherpa-embedded skill)
+│   ├── finance/CLAUDE.md    ← Finance rules (disabled, untouched)
+│   ├── frontend/SKILL.md    ← Frontend rules (loads as ai-sherpa-frontend skill)
+│   ├── marketing/CLAUDE.md  ← Marketing rules (disabled, untouched)
+│   ├── procurement/CLAUDE.md← Procurement rules (disabled, untouched)
+│   ├── sales/CLAUDE.md      ← Sales rules (disabled, untouched)
+│   ├── service/CLAUDE.md    ← Customer Service rules (disabled, untouched)
+│   ├── uiux/SKILL.md        ← UI/UX rules (loads as ai-sherpa-uiux skill)
+│   └── web/SKILL.md         ← Web full-stack rules (loads as ai-sherpa-web skill)
 ├── templates/
 │   └── project-CLAUDE.md    ← Template for project-specific CLAUDE.md (Layer 3)
 ├── settings/
@@ -70,6 +72,8 @@ There is **no** `package.json`, `pyproject.toml`, `Cargo.toml`, `Makefile`, or s
 │   └── test-setup.sh        ← Unit tests for setup.sh helper functions
 └── .github/CODEOWNERS       ← All changes require @ai-sherpa-team review
 ```
+
+**Namespace reservation:** `~/.claude/skills/ai-sherpa-*/` is reserved for AI Sherpa-authored domain skills installed by setup. Do not name third-party skills with this prefix to avoid collision on `Install-AISherpaSkills` overwrites.
 
 ---
 
@@ -104,12 +108,12 @@ The test script:
 | Layer | Location | Max Lines | Purpose |
 |---|---|---|---|
 | 1 — Global | `core/CLAUDE.md` | ~230 | Company-wide guardrails, NDA check, universal do's/don'ts, **Global Plugin & Skill Invocation Contract** |
-| 2 — Domain | `domains/<domain>/CLAUDE.md` | ~275 | Domain-specific rules (embedded, web, backend, data, devops, etc.), **Domain Plugin & Skill Invocation Contract** |
+| 2 — Domain | `domains/<domain>/SKILL.md` (8 active domains) or `CLAUDE.md` (5 disabled) | ~275 | Domain-specific rules (embedded, web, backend, data, devops, ai, frontend, uiux), loaded progressively as `ai-sherpa-<domain>` skills under `~/.claude/skills/` |
 | 3 — Project | `<project>/CLAUDE.md` (template) | ~100 | Project-specific context, stack, known issues |
 
 **Critical:** Combined total of Layers 1 + 2 (the merged `~/.claude/CLAUDE.md`) must stay under **~500 lines** to avoid Claude deprioritizing later content. Layer 3 lives in the project repo and is not counted against this budget — Claude Code stacks it on top per-project. Keep each layer tight and high-signal — verbose rules get ignored. (Previous target was ~300 lines combined; raised after empirical testing showed Claude reliably honors longer files. See `docs/superpowers/specs/2026-05-29-plugin-invocation-contracts-design.md`.)
 
-**Layer 1 + Layer 2 merge at setup time.** `setup.ps1` and `setup.sh` concatenate `core/CLAUDE.md` + `domains/<chosen>/CLAUDE.md` (with a `---` separator) and write the result to `~/.claude/CLAUDE.md`. The user's installed file is the merge, not a single layer.
+**Layer 1 = core only at setup time.** `setup.ps1` and `setup.sh` write `core/CLAUDE.md` verbatim to `~/.claude/CLAUDE.md` (no domain concatenation). Layer 2 is delivered as one `ai-sherpa-<domain>` skill per active domain, installed under `~/.claude/skills/ai-sherpa-<name>/SKILL.md` and activated by Claude when a task matches the skill's description. Domains listed in `plugins.json.disabled_domains` keep their CLAUDE.md files in the repo but are not installed.
 
 ### Documentation
 - All docs are in **English**.
@@ -129,9 +133,9 @@ The test script:
    ```bash
    node -e "JSON.parse(require('fs').readFileSync('plugins.json'))"
    ```
-4. If you add or modify a domain's `CLAUDE.md`, check the line count stays under the limit:
+4. If you add or modify a domain's `SKILL.md` (or one of the disabled-domain `CLAUDE.md` files), check the line count stays under the limit:
    ```bash
-   wc -l domains/<domain>/CLAUDE.md
+   wc -l domains/<domain>/SKILL.md
    ```
 
 ---
@@ -190,7 +194,7 @@ Updates core skills and global settings.
 | `plugins.json` | Plugin marketplace and per-domain install lists | When adding/removing plugins |
 | `settings/settings-template.json` | Secrets-protection deny rules | When adding new secret patterns |
 | `core/CLAUDE.md` | Global AI behaviour rules | When changing universal guardrails |
-| `domains/<domain>/CLAUDE.md` | Domain-specific rules | When refining domain guidance |
+| `domains/<domain>/SKILL.md`  | Domain-specific rules (active domains) | When refining domain guidance |
 | `setup.sh` / `setup.ps1` | Setup logic | When changing install flow or prerequisites |
 | `scripts/test-setup.sh` | Unit tests for bash helpers | When adding new setup features |
 | `docs/` | User-facing documentation | When process or troubleshooting info changes |
