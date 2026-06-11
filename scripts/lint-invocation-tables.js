@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 // Verify every plugin/skill in plugins.json is acknowledged in the matching
-// CLAUDE.md scope file.
+// scope file.
 //
 // Scope routing:
 //   plugins.json.global[]            → core/CLAUDE.md
 //   plugins.json.skills.global[]     → core/CLAUDE.md
-//   plugins.json.domains.<name>[]    → domains/<name>/CLAUDE.md
-//   plugins.json.skills.<name>[]     → domains/<name>/CLAUDE.md
+//   plugins.json.domains.<name>[]    → domains/<name>/SKILL.md   (or CLAUDE.md if disabled)
+//   plugins.json.skills.<name>[]     → domains/<name>/SKILL.md   (or CLAUDE.md if disabled)
 //
-// Phase 1 permissive mode: a domain CLAUDE.md without a
+// Phase 1 permissive mode: a file without a
 // "## Plugin & Skill Invocation Contract" heading is SKIPPED, not flagged.
 // Phase 3 (bulk rollout) will remove this skip behavior once every domain
 // has a contract.
 //
-// Exit 0 = clean; exit 1 = at least one missing entry.
+// SKILL.md files must additionally have valid YAML frontmatter with `name:`
+// and `description:` fields. Missing or malformed frontmatter is a hard error.
+//
+// Exit 0 = clean; exit 1 = at least one missing entry or malformed frontmatter.
 
 const fs = require('fs');
 const path = require('path');
@@ -43,10 +46,10 @@ function collectExpected(config) {
   return expected;
 }
 
-function scopeFile(scope) {
-  return scope === 'global'
-    ? path.join(ROOT, 'core/CLAUDE.md')
-    : path.join(ROOT, 'domains', scope, 'CLAUDE.md');
+function scopeFile(scope, disabledSet) {
+  if (scope === 'global') return path.join(ROOT, 'core/CLAUDE.md');
+  const filename = disabledSet.has(scope) ? 'CLAUDE.md' : 'SKILL.md';
+  return path.join(ROOT, 'domains', scope, filename);
 }
 
 function backtickedTokenRegex(name) {
@@ -54,19 +57,58 @@ function backtickedTokenRegex(name) {
   return new RegExp('`' + escaped + '(:|`)');
 }
 
+function validateFrontmatter(content, relPath) {
+  if (!content.startsWith('---\n') && !content.startsWith('---\r\n')) {
+    return `MALFORMED FRONTMATTER: ${relPath} does not start with '---' line`;
+  }
+  const endMatch = content.match(/\r?\n---\r?\n/);
+  if (!endMatch) {
+    return `MALFORMED FRONTMATTER: ${relPath} has no closing '---' line`;
+  }
+  const fmEnd = endMatch.index + endMatch[0].length;
+  const fm = content.slice(0, fmEnd);
+  if (!/^name:\s*\S/m.test(fm)) {
+    return `MALFORMED FRONTMATTER: ${relPath} missing 'name:' field`;
+  }
+  if (!/^description:\s*\S/m.test(fm)) {
+    return `MALFORMED FRONTMATTER: ${relPath} missing 'description:' field`;
+  }
+  return null;
+}
+
 function main() {
   const config = loadConfig();
   const expected = collectExpected(config);
+  const disabledSet = new Set(config.disabled_domains || []);
   let failed = false;
 
   for (const [scope, names] of Object.entries(expected)) {
-    const mdPath = scopeFile(scope);
+    let mdPath = scopeFile(scope, disabledSet);
     if (!fs.existsSync(mdPath)) {
-      console.error(`MISSING FILE: ${mdPath} (referenced by plugins.json scope "${scope}")`);
-      failed = true;
-      continue;
+      // Phase 1 permissive mode: if SKILL.md doesn't exist yet, fall back to
+      // CLAUDE.md. Once all domains have been migrated (Phase 3), remove this
+      // fallback and treat missing SKILL.md as a hard error.
+      const fallback = path.join(ROOT, 'domains', scope, 'CLAUDE.md');
+      if (scope !== 'global' && mdPath.endsWith('SKILL.md') && fs.existsSync(fallback)) {
+        console.log(`FALLBACK: ${path.relative(ROOT, mdPath)} not found — using CLAUDE.md`);
+        mdPath = fallback;
+      } else {
+        console.error(`MISSING FILE: ${mdPath} (referenced by plugins.json scope "${scope}")`);
+        failed = true;
+        continue;
+      }
     }
     const content = fs.readFileSync(mdPath, 'utf8');
+
+    // Frontmatter check applies only to SKILL.md files.
+    if (mdPath.endsWith(`${path.sep}SKILL.md`) || mdPath.endsWith('/SKILL.md')) {
+      const err = validateFrontmatter(content, path.relative(ROOT, mdPath));
+      if (err) {
+        console.error(err);
+        failed = true;
+        continue;
+      }
+    }
 
     // Phase 1 permissive mode: skip if this file hasn't received an
     // Invocation Contract yet. Phase 3 removes this skip.
