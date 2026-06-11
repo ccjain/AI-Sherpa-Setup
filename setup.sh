@@ -548,6 +548,7 @@ process.stdin.on('end',()=>{
     [[ -d "$dir" ]] || continue
     local name
     name=$(basename "$dir")
+    [[ -z "$name" ]] && continue
     # Skip disabled domains
     if echo "$disabled" | grep -qxF "$name"; then
       log_info "  [SKIP]   ai-sherpa-$name (disabled_domains)"
