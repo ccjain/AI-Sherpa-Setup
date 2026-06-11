@@ -8,10 +8,11 @@
 //   plugins.json.domains.<name>[]    → domains/<name>/SKILL.md   (or CLAUDE.md if disabled)
 //   plugins.json.skills.<name>[]     → domains/<name>/SKILL.md   (or CLAUDE.md if disabled)
 //
-// Phase 1 permissive mode: a file without a
-// "## Plugin & Skill Invocation Contract" heading is SKIPPED, not flagged.
-// Phase 3 (bulk rollout) will remove this skip behavior once every domain
-// has a contract.
+// Phase 1 permissive mode — two behaviors that BOTH go away in Phase 3:
+//   (a) A SKILL.md that doesn't exist yet falls back to the sibling CLAUDE.md
+//       (transition state while domains are being migrated to SKILL.md).
+//   (b) A scope file without a "## Plugin & Skill Invocation Contract" heading
+//       is SKIPPED, not flagged.
 //
 // SKILL.md files must additionally have valid YAML frontmatter with `name:`
 // and `description:` fields. Missing or malformed frontmatter is a hard error.
@@ -67,10 +68,10 @@ function validateFrontmatter(content, relPath) {
   }
   const fmEnd = endMatch.index + endMatch[0].length;
   const fm = content.slice(0, fmEnd);
-  if (!/^name:\s*\S/m.test(fm)) {
+  if (!/^name:[ \t]*\S/m.test(fm)) {
     return `MALFORMED FRONTMATTER: ${relPath} missing 'name:' field`;
   }
-  if (!/^description:\s*\S/m.test(fm)) {
+  if (!/^description:[ \t]*\S/m.test(fm)) {
     return `MALFORMED FRONTMATTER: ${relPath} missing 'description:' field`;
   }
   return null;
@@ -90,7 +91,7 @@ function main() {
       // fallback and treat missing SKILL.md as a hard error.
       const fallback = path.join(ROOT, 'domains', scope, 'CLAUDE.md');
       if (scope !== 'global' && mdPath.endsWith('SKILL.md') && fs.existsSync(fallback)) {
-        console.log(`FALLBACK: ${path.relative(ROOT, mdPath)} not found — using CLAUDE.md`);
+        console.warn(`FALLBACK: ${path.relative(ROOT, mdPath)} not found — using CLAUDE.md`);
         mdPath = fallback;
       } else {
         console.error(`MISSING FILE: ${mdPath} (referenced by plugins.json scope "${scope}")`);
