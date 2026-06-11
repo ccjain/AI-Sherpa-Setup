@@ -1151,15 +1151,9 @@ function Get-AiSherpaDomain {
 }
 
 function Write-GlobalClaudeMd {
-    param([string]$Domain)
     $core   = "$ScriptDir\core\CLAUDE.md"
-    $domain = "$ScriptDir\domains\$Domain\CLAUDE.md"
     if (-not (Test-Path $core)) {
         Write-Err "core/CLAUDE.md not found at: $core"
-        exit 1
-    }
-    if (-not (Test-Path $domain)) {
-        Write-Err "Domain CLAUDE.md not found at: $domain"
         exit 1
     }
     $claudeDir = "$env:USERPROFILE\.claude"
@@ -1169,17 +1163,13 @@ function Write-GlobalClaudeMd {
         Copy-Item $target "$target.bak" -Force
         Write-Warn "Backed up existing ~/.claude/CLAUDE.md to CLAUDE.md.bak"
     }
-    # Merge: core rules first, then the chosen domain's rules. Universal guidance
-    # reads first, domain refines on top. Separator makes the boundary obvious.
-    # -Encoding UTF8 on Get-Content is REQUIRED on PowerShell 5.1: the default
-    # codepage is system ANSI (Windows-1252 in en-US), which mangles UTF-8 chars
-    # like em-dashes (— -> â€") at read time. Write-side -Encoding UTF8 alone
-    # is not enough because the corruption happens before the write.
-    $coreContent   = (Get-Content $core -Raw -Encoding UTF8).TrimEnd()
-    $domainContent = (Get-Content $domain -Raw -Encoding UTF8)
-    $merged = $coreContent + "`r`n`r`n---`r`n`r`n" + $domainContent
-    Set-Content -Path $target -Value $merged -Encoding UTF8
-    Write-Info "Merged core + $Domain rules written to $target (active for all projects)"
+    # Global rules only. Domain-specific rules live in ai-sherpa-<domain> skills
+    # under ~/.claude/skills/ and load progressively when their description matches.
+    # -Encoding UTF8 on Get-Content avoids the Windows-1252 default codepage
+    # that would mangle em-dashes at read time.
+    $coreContent = (Get-Content $core -Raw -Encoding UTF8).TrimEnd()
+    Set-Content -Path $target -Value $coreContent -Encoding UTF8
+    Write-Info "core rules written to $target (active for all projects)"
 }
 
 function Resolve-PipCommand {
@@ -2073,6 +2063,8 @@ function Invoke-Update {
     Initialize-Rtk
     Install-McpServers -Domain $savedDomain
 
+    Install-AISherpaSkills
+    Write-GlobalClaudeMd
     Write-GlobalSettings
     # Same ordering as the main install flow — runs AFTER Write-GlobalSettings.
     # (With the merge-based Write-GlobalSettings, enabledPlugins survives the
@@ -2196,6 +2188,16 @@ function Invoke-Uninstall {
         }
     }
 
+    # 3b. Remove AI Sherpa domain skills (ai-sherpa-*/)
+    Write-Info "Removing AI Sherpa domain skills from $env:USERPROFILE\.claude\skills\..."
+    $skillsDir = "$env:USERPROFILE\.claude\skills"
+    if (Test-Path $skillsDir) {
+        Get-ChildItem $skillsDir -Directory -Filter "ai-sherpa-*" -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Info "  - $($_.Name)"
+            Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     # 4. Remove AI Sherpa state file (.ai-sherpa-state.json — the saved-domain marker)
     $stateFile = "$env:USERPROFILE\.claude\.ai-sherpa-state.json"
     if (Test-Path $stateFile) {
@@ -2241,6 +2243,43 @@ function Invoke-Uninstall {
     Write-Host "  Re-run setup.bat to start fresh."
     Write-Host "======================================================" -ForegroundColor Green
     Write-Host ""
+}
+
+function Install-AISherpaSkills {
+    $configFile = "$ScriptDir\plugins.json"
+    $skillsDir  = "$env:USERPROFILE\.claude\skills"
+    if (-not (Test-Path $skillsDir)) { New-Item -ItemType Directory -Path $skillsDir -Force | Out-Null }
+
+    $disabled = @()
+    if (Test-Path $configFile) {
+        try {
+            $cfg = Get-Content $configFile -Raw | ConvertFrom-Json
+            if ($cfg.disabled_domains) { $disabled = @($cfg.disabled_domains) }
+        } catch {}
+    }
+
+    $domainsRoot = "$ScriptDir\domains"
+    if (-not (Test-Path $domainsRoot)) {
+        Write-Warn "No domains/ directory at $domainsRoot - skipping AI Sherpa skill install."
+        return
+    }
+
+    $installed = 0
+    foreach ($d in Get-ChildItem $domainsRoot -Directory) {
+        $name = $d.Name
+        if ($disabled -contains $name) {
+            Write-Info "  [SKIP]   ai-sherpa-$name (disabled_domains)"
+            continue
+        }
+        $src = Join-Path $d.FullName "SKILL.md"
+        if (-not (Test-Path $src)) { continue }
+        $targetDir = Join-Path $skillsDir "ai-sherpa-$name"
+        if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null }
+        Copy-Item $src (Join-Path $targetDir "SKILL.md") -Force
+        Write-Info "  [READY]  ai-sherpa-$name installed to $targetDir\SKILL.md"
+        $installed++
+    }
+    Write-Info "AI Sherpa domain skills installed ($installed total) under $skillsDir"
 }
 
 function Print-Summary {
@@ -2311,7 +2350,8 @@ Install-Python
 #
 # $domain is still used downstream for:
 #   - embedded-toolchain detection (`if ($domain -eq "embedded") { ... }`)
-#   - Write-GlobalClaudeMd $domain  (CLAUDE.md domain rules merge)
+#   - Install-AISherpaSkills        (ai-sherpa-<name> skill dirs)
+#   - Write-GlobalClaudeMd          (core-only CLAUDE.md to ~/.claude/)
 #   - Install-Tools -Domain $domain  (per-domain CLI tools)
 #   - Write-AiSherpaState -Domain $domain  (state.json initial value)
 #   - Test-Installation $domain  (verification + summary)
@@ -2422,8 +2462,10 @@ if ($domain -eq "embedded") {
     }
 }
 
-# Global install: write CLAUDE.md to ~/.claude/ — active for all projects
-Write-GlobalClaudeMd $domain
+# Install AI Sherpa domain skills (one ai-sherpa-<name> skill per non-disabled domain)
+Install-AISherpaSkills
+# Global install: write core rules to ~/.claude/CLAUDE.md — active for all projects
+Write-GlobalClaudeMd
 Enable-WindowsLongPaths
 Install-Tools -Domain $domain -Upgrade:$isReinstall
 Initialize-Rtk
