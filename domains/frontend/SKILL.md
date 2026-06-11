@@ -1,12 +1,11 @@
+---
+name: ai-sherpa-frontend
+description: Use when working on any frontend / UI accessibility / performance task — React, Vue, Angular, Next.js, Svelte, HTML, CSS, Tailwind, shadcn, accessibility, a11y, WCAG, ARIA, Core Web Vitals, responsive design, component library, design system. Provides accessibility guardrails and frontend security rules.
+---
+
 # AI Sherpa — Frontend + UI/UX Rules
 
-These rules apply to frontend and UI/UX work — narrower than the full-stack
-`web` domain. Use this domain when the focus is design systems, component
-libraries, accessibility, performance, browser compatibility, or visual
-craft. They extend the global rules in `core/CLAUDE.md` — do not remove
-global rules.
-
----
+These rules apply in addition to the global guidelines in `core/CLAUDE.md`.
 
 ## Context Check (Before Every Frontend Task)
 

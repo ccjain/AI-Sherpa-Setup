@@ -1,10 +1,11 @@
+---
+name: ai-sherpa-web
+description: Use when working on any full-stack web task — React, Vue, Angular, Next.js, Node.js, Express, FastAPI, Django, Spring, .NET, HTML, CSS, Tailwind, shadcn, frontend, backend, API endpoint, component, accessibility, UI, form, authentication. Provides full-stack security guardrails, accessibility rules, and framework conventions.
+---
+
 # AI Sherpa — Web (Full-stack) Rules
 
-These rules apply to full-stack web projects — frontend (React/Vue/Angular/HTML/CSS),
-backend (Node.js/Python/Go/Java/.NET), and UI/UX implementation.
-They extend the global rules in core/CLAUDE.md.
-
----
+These rules apply in addition to the global guidelines in `core/CLAUDE.md`.
 
 ## Context Check (Before Every Task)
 

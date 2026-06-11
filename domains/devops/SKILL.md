@@ -1,8 +1,11 @@
+---
+name: ai-sherpa-devops
+description: Use when working on any DevOps / platform / SRE task — Kubernetes, Helm, Terraform, Ansible, CI/CD, GitOps, ArgoCD, observability, Prometheus, Grafana, incident response, on-call, cloud infrastructure, AWS, GCP, Azure. Provides infrastructure-as-code guardrails and operational conventions.
+---
+
 # AI Sherpa — DevOps / Platform Rules
 
-These rules apply to all DevOps and platform engineering projects. They extend core/CLAUDE.md.
-
----
+These rules apply in addition to the global guidelines in `core/CLAUDE.md`.
 
 ## Always Do (DevOps)
 

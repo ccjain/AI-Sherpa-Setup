@@ -1,8 +1,11 @@
+---
+name: ai-sherpa-backend
+description: Use when working on any backend service task — REST API, GraphQL, gRPC, microservice, database, ORM, queue, message broker, auth, session, JWT, server-side, business logic, Node.js, Express, FastAPI, Django, Spring, .NET. Provides backend security guardrails and framework conventions.
+---
+
 # AI Sherpa — Backend Rules (Node.js / Python)
 
-These rules apply to all backend projects. They extend core/CLAUDE.md.
-
----
+These rules apply in addition to the global guidelines in `core/CLAUDE.md`.
 
 ## Always Do (All Backend)
 

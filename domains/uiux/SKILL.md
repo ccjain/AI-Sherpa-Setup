@@ -1,8 +1,11 @@
+---
+name: ai-sherpa-uiux
+description: Use when working on any UI design / UX task — wireframe, mockup, prototype, Figma, design system, design tokens, user research, usability, information architecture, visual design, interaction design, design review. Provides UI/UX design conventions and review patterns.
+---
+
 # AI Sherpa — UI/UX Rules
 
-These rules apply to all UI/UX design and front-end implementation projects. They extend core/CLAUDE.md.
-
----
+These rules apply in addition to the global guidelines in `core/CLAUDE.md`.
 
 ## Context Check (Before Every UI/UX Task)
 

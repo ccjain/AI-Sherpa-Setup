@@ -1,8 +1,11 @@
+---
+name: ai-sherpa-data
+description: Use when working on any data engineering / data science task — SQL, NoSQL, dbt, Spark, Airflow, pandas, ETL, data pipeline, data warehouse, data lake, schema migration, data quality, analytics, machine learning model. Provides data-handling guardrails and pipeline conventions.
+---
+
 # AI Sherpa — Data Science / ML Rules
 
-These rules apply to all data science and ML projects. They extend core/CLAUDE.md.
-
----
+These rules apply in addition to the global guidelines in `core/CLAUDE.md`.
 
 ## Always Do (Data Science)
 

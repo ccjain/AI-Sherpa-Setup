@@ -1,10 +1,11 @@
+---
+name: ai-sherpa-ai
+description: Use when working on any AI / LLM application task — Claude API, OpenAI, Anthropic SDK, RAG, vector database, embeddings, agent orchestration, prompt engineering, evals, MLOps, model training, fine-tuning, LangChain. Provides AI-specific guardrails and effectiveness boundaries.
+---
+
 # AI Sherpa — AI / ML Engineering Rules
 
-These rules apply to AI engineering work: building Claude/LLM apps, AI agents,
-RAG, evals, prompt engineering, fine-tuning, and model ops. They extend the
-global rules in `core/CLAUDE.md` — do not remove global rules.
-
----
+These rules apply in addition to the global guidelines in `core/CLAUDE.md`.
 
 ## Context Check (Before Every AI Task)
 
