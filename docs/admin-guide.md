@@ -65,8 +65,8 @@ the setup script.
 You also need to declare the marketplace itself, naming the GitHub repo
 that backs it.
 
-**Example (real history):** when we added the antigravity systems-programming
-bundle, we did this in two steps:
+**Example (real history):** when we added Vercel's `agent-browser` plugin, we
+did this in two steps:
 
 ```json
 // Step 1 — add the marketplace
@@ -74,17 +74,15 @@ bundle, we did this in two steps:
   { "repo": "anthropics/knowledge-work-plugins",  "name": "knowledge-work-plugins"        },
   { "repo": "anthropics/financial-services",      "name": "claude-for-financial-services" },
   { "repo": "jeffallan/claude-skills",            "name": "fullstack-dev-skills"          },
-  { "repo": "sickn33/antigravity-awesome-skills", "name": "antigravity-awesome-skills"    }
+  { "repo": "vercel-labs/agent-browser",          "name": "agent-browser"                 }
 ]
 ```
 
 ```json
-// Step 2 — add the plugin entry under its domain
-"domains": {
-  "embedded": [
-    { "name": "antigravity-bundle-systems-programming", "marketplace": "antigravity-awesome-skills" }
-  ]
-}
+// Step 2 — add the plugin entry (here in global so every domain gets it)
+"global": [
+  { "name": "agent-browser", "marketplace": "agent-browser" }
+]
 ```
 
 ### How to find the right `name` for a plugin

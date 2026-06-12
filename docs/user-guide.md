@@ -19,8 +19,8 @@ This guide covers three install scenarios:
    any that are missing (winget on Windows, nvm on Linux/macOS for Node, package
    manager for Git).
 2. Registers every Claude Code marketplace declared in `plugins.json` →
-   `marketplaces[]` (currently 8: `knowledge-work-plugins`, `claude-for-financial-services`,
-   `fullstack-dev-skills`, `antigravity-awesome-skills`, `anthropic-agent-skills`,
+   `marketplaces[]` (currently 7: `knowledge-work-plugins`, `claude-for-financial-services`,
+   `fullstack-dev-skills`, `anthropic-agent-skills`,
    `claude-code-workflows`, `thedotmack`, `agent-browser`). Setup only registers
    the marketplaces that are actually referenced by global / domain plugins, so
    unused marketplaces in the list don't cost time.
@@ -246,7 +246,6 @@ After picking domain **1** (Embedded):
 
 | Source | Type | Contents |
 |---|---|---|
-| `antigravity-bundle-systems-programming` plugin | plugin | Editorial bundle of low-level / systems skills (C, C++, Rust, embedded, performance) |
 | `beriberikix/zephyr-agent-skills` | raw skills | 21 Zephyr skills: `board-bringup`, `build-system`, `connectivity-ble`, `devicetree`, `hardware-io`, `kernel-basics`, `kernel-services`, `multicore`, `power-performance`, `security-updates`, `storage`, `testing-debugging`, `zephyr-foundations`, and more |
 
 All of these auto-activate on relevant prompts; none need a slash command.

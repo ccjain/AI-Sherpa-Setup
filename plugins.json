@@ -7,7 +7,6 @@
     { "repo": "anthropics/knowledge-work-plugins",  "name": "knowledge-work-plugins"        },
     { "repo": "anthropics/financial-services",      "name": "claude-for-financial-services" },
     { "repo": "jeffallan/claude-skills",            "name": "fullstack-dev-skills"          },
-    { "repo": "sickn33/antigravity-awesome-skills", "name": "antigravity-awesome-skills"    },
     { "repo": "anthropics/skills",                  "name": "anthropic-agent-skills"        },
     { "repo": "wshobson/agents",                    "name": "claude-code-workflows"         },
     { "repo": "thedotmack/claude-mem",              "name": "thedotmack"                    },
@@ -20,9 +19,7 @@
     { "name": "agent-browser",        "marketplace": "agent-browser"           }
   ],
   "domains": {
-    "embedded": [
-      { "name": "antigravity-bundle-systems-programming", "marketplace": "antigravity-awesome-skills" }
-    ],
+    "embedded": [],
     "web": [
       { "name": "figma",           "marketplace": "claude-plugins-official" },
       { "name": "frontend-design", "marketplace": "claude-plugins-official" },
