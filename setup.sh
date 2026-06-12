@@ -1296,7 +1296,8 @@ process.stdin.on('end',()=>{
       m.command||'',
       (m.args||[]).join(' '),
       m.fallbackCommand||'',
-      (m.fallbackArgs||[]).join(' ')
+      (m.fallbackArgs||[]).join(' '),
+      (m.prewarm||[]).join(' ')
     ].join('\t')+'\n');
   });
 });
@@ -1313,7 +1314,7 @@ process.stdin.on('end',()=>{
     return 0
   fi
 
-  while IFS=$'\t' read -r name command args fb_cmd fb_args; do
+  while IFS=$'\t' read -r name command args fb_cmd fb_args prewarm; do
     [[ -z "$name" ]] && continue
 
     if claude mcp get "$name" >/dev/null 2>&1; then
@@ -1337,6 +1338,27 @@ process.stdin.on('end',()=>{
       add_skipped_step "$name (MCP server)" \
         "claude mcp add exited $rc" \
         "claude mcp add -s user $name -- $command $args"
+    fi
+
+    # Pre-warm the launcher's cache so the FIRST Claude Code launch doesn't hit a
+    # cold-start download timeout. For a `uvx`-launched server this pulls the
+    # package into uv's cache here, during setup, rather than on first connect
+    # (where it can exceed Claude Code's MCP probe timeout and show as "failed to
+    # connect"). For a direct-binary command it's a fast no-op. We reuse the
+    # resolved launch command, drop its final (server-starting) subcommand —
+    # e.g. `serve`, which never exits — and append the declared prewarm args
+    # (e.g. `--help`) so the process runs the download then exits promptly.
+    if [[ -n "$prewarm" ]]; then
+      local warm_args=()
+      # shellcheck disable=SC2206  # intentional word-split of the space-joined args
+      local arg_arr=($args)
+      if (( ${#arg_arr[@]} > 1 )); then
+        warm_args=("${arg_arr[@]:0:${#arg_arr[@]}-1}")
+      fi
+      # shellcheck disable=SC2206
+      warm_args+=($prewarm)
+      log_info "Pre-warming '$name' cache ($command ${warm_args[*]})..."
+      "$command" "${warm_args[@]}" >/dev/null 2>&1 || true
     fi
   done <<< "$entries"
 }

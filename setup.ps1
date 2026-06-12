@@ -1930,6 +1930,23 @@ function Install-McpServers {
                             -Reason "claude mcp add exited $rc" `
                             -ManualInstall "claude mcp add -s user $name -- $command $($argsList -join ' ')"
         }
+
+        # Pre-warm the launcher's cache so the FIRST Claude Code launch doesn't hit
+        # a cold-start download timeout. For a `uvx`-launched server this pulls the
+        # package into uv's cache here, during setup, instead of on first connect
+        # (where it can exceed Claude Code's MCP probe timeout and show as "failed
+        # to connect"). For a direct-binary command it's a fast no-op. We reuse the
+        # resolved launch command, drop its final (server-starting) subcommand —
+        # e.g. `serve`, which never exits — and append the declared prewarm args
+        # (e.g. `--help`) so the process runs the download then exits promptly.
+        if ($t.mcp.prewarm) {
+            $warmArgs = @()
+            if ($argsList.Count -gt 1) { $warmArgs = @($argsList[0..($argsList.Count - 2)]) }
+            $warmArgs += @($t.mcp.prewarm)
+            Write-Info "Pre-warming '$name' cache ($command $($warmArgs -join ' '))..."
+            try { & $command @warmArgs *> $null } catch {}
+            $global:LASTEXITCODE = 0
+        }
     }
 }
 

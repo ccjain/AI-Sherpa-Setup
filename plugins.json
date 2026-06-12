@@ -83,7 +83,8 @@
           "command": "uvx",
           "args": ["code-review-graph", "serve"],
           "fallbackCommand": "code-review-graph",
-          "fallbackArgs": ["serve"]
+          "fallbackArgs": ["serve"],
+          "prewarm": ["--help"]
         }
       },
       {

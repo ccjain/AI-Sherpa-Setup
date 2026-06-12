@@ -16,6 +16,10 @@
       "Write(**/.env.*)"
     ]
   },
+  "env": {
+    "MCP_TIMEOUT": "120000",
+    "MCP_TOOL_TIMEOUT": "120000"
+  },
   "statusLine": {
     "type": "command",
     "command": "bash \"__CLAUDE_HOOKS_DIR__/statusline-command.sh\""
