@@ -35,6 +35,11 @@ check_command "nonexistent_cmd_xyz_999" 2>/dev/null && RC=0 || RC=$?; assert_fal
 echo "=== Test: write_settings ==="
 TMP=$(mktemp -d)
 HOME_BAK="$HOME"; HOME="$TMP"
+# write_settings writes to $EFFECTIVE_HOME/.claude, not $HOME/.claude.
+# EFFECTIVE_HOME was captured at setup.sh source time (line 150) and points
+# at the REAL home dir — without this override the test silently writes to
+# /c/Users/Admin/.claude on every run and the TMP assertions all fail.
+EFFECTIVE_HOME_BAK="$EFFECTIVE_HOME"; EFFECTIVE_HOME="$TMP"
 
 write_settings
 assert_file_exists "global settings.json created" "$TMP/.claude/settings.json"
@@ -46,7 +51,9 @@ assert_no_file "no .bak on first run" "$TMP/.claude/settings.json.bak"
 write_settings
 assert_file_exists "settings.json.bak created on second run" "$TMP/.claude/settings.json.bak"
 
-HOME="$HOME_BAK"; rm -rf "$TMP"
+HOME="$HOME_BAK"
+EFFECTIVE_HOME="$EFFECTIVE_HOME_BAK"
+rm -rf "$TMP"
 
 # --- Test: project-level helpers are gone (regression guard) ---
 echo "=== Test: project-level helpers are not defined ==="
