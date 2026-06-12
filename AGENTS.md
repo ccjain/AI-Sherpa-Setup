@@ -12,7 +12,7 @@ When a developer runs the setup script, the script:
 1. Installs missing prerequisites (Node.js 20+, Git, Claude Code CLI)
 2. Registers Claude Code plugin marketplaces and installs core + domain-specific plugins
 3. Writes secrets-protection deny rules to `~/.claude/settings.json` (active for every Claude session)
-4. Writes the merged core + domain `CLAUDE.md` rules to `~/.claude/CLAUDE.md` (active for every Claude session)
+4. Writes `core/CLAUDE.md` (universal rules only) to `~/.claude/CLAUDE.md` and installs one `ai-sherpa-<domain>` skill per active domain under `~/.claude/skills/` (both active for every Claude session)
 5. Installs the code-review-graph Python package (auto-mode via SessionStart hook)
 
 ---
@@ -166,11 +166,11 @@ Setup writes only to `~/.claude/`. The current working directory does not affect
 
 Flow:
 1. Check/install Node.js, Git, Python 3, Claude Code CLI
-2. Prompt for domain (1–11 options: embedded, web, data, devops, marketing, sales, finance, service, procurement, ai, frontend)
+2. Prompt for domain (bash setup.sh — 1–11 options: embedded, web, data, devops, marketing, sales, finance, service, procurement, ai, frontend; setup.ps1 installs every non-disabled domain unconditionally and uses the saved domain only for embedded toolchain detection)
 3. Register marketplaces from `plugins.json`
 4. Install global plugins, then domain-specific plugins
 5. Write `~/.claude/settings.json` (global; applies to every Claude session)
-6. Write merged core + domain rules to `~/.claude/CLAUDE.md` (global; applies to every Claude session)
+6. Write `core/CLAUDE.md` verbatim to `~/.claude/CLAUDE.md` (universal rules only; domain-specific rules are delivered as `ai-sherpa-<domain>` skills under `~/.claude/skills/` and load progressively when their description matches a task)
 7. Install code-review-graph (runs in auto mode via SessionStart hook)
 8. Print summary
 
